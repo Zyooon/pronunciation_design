@@ -1,0 +1,27 @@
+[project]
+name = "pronunciation-design"
+version = "0.1.0"
+description = "Korean pronunciation scoring MVP for English learners using MFCC, ZCR, duration, RMS, and reference vectors."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+
+dependencies = [
+    "librosa>=0.10.2",
+    "soundfile>=0.12.1",
+    "pydub>=0.25.1",
+    "numpy>=1.26.0",
+    "scikit-learn>=1.4.0",
+    "gradio>=4.44.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
