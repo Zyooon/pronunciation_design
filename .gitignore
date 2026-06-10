@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# 가상환경
+.venv/
+venv/
+env/
+.env
+
+# uv
+.uv/
+uv.lock
+
+# 환경변수
+.env
+.env.local
+.env.*.local
+
+# 데이터 파일
+data/pronunciation.db
+data/results.csv
+pcm_original/
+wav_converted/
+
+# 기준 벡터 (직접 생성하는 파일)
+data/reference_vectors.json
+
+# 모델 캐시
+*.pt
+*.pth
+*.onnx
+~/.cache/whisper/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# 빌드
+dist/
+build/
+*.egg-info/
+
+# 로그
+*.log
+logs/
+
+# 테스트
+.pytest_cache/
+.coverage
+htmlcov/
