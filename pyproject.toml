@@ -12,6 +12,9 @@ dependencies = [
     "numpy>=1.26.0",
     "scikit-learn>=1.4.0",
     "gradio>=4.44.0",
+    "sounddevice>=0.5.5",
+    "elevenlabs>=2.52.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [project.optional-dependencies]

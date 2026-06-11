@@ -22,10 +22,7 @@ uv.lock
 .env.*.local
 
 # 데이터 파일
-data/pronunciation.db
-data/results.csv
-pcm_original/
-wav_converted/
+data/
 
 # 기준 벡터 (직접 생성하는 파일)
 data/reference_vectors.json

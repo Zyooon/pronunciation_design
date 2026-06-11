@@ -1,0 +1,101 @@
+"""
+words.txt를 읽어 ElevenLabs(영어 4개 목소리) 오디오 파일을 생성합니다.
+인터넷 연결 및 .env의 ELEVENLABS_API_KEY 필요.
+
+폴더 구조:
+  data/reference_en/<Voice>/단어.mp3
+"""
+
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+from elevenlabs import ElevenLabs
+
+load_dotenv()
+
+WORDS_FILE = Path("data/words.txt")
+EN_DIR = Path("data/reference_en")
+
+# ElevenLabs 프리셋 목소리 ID
+VOICES: dict[str, str] = {
+    "Bella":   "hpp4J3VqNfWAUOO0d1Us",
+    "Sarah":   "EXAVITQu4vr4xnSDxMaL",
+    "Jessica": "cgSgspJ2msm6clMCkdW9",
+    "Matilda": "XrExE9yKIg1WjnnlVkGX",
+    "Brian":   "nPczCjzI2devNBz1zQrb",
+    "George":  "JBFqnCBsd6RMkjVDRZzb",
+    "Adam":    "pNInz6obpgDQGcFmaJgB",
+    "River":   "SAz9YHcvj6GT2YYXdXww",
+}
+
+
+def load_words(path: Path) -> list[tuple[str, str, str]]:
+    entries = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(",")
+        if len(parts) != 3:
+            print(f"[SKIP] 형식 오류: {line!r}")
+            continue
+        word, ko_pron, phoneme = (p.strip() for p in parts)
+        entries.append((word, ko_pron, phoneme))
+    return entries
+
+
+def generate_elevenlabs(client: ElevenLabs, text: str, voice_id: str, dest: Path) -> None:
+    audio = client.text_to_speech.convert(
+        voice_id=voice_id,
+        text=text,
+        model_id="eleven_multilingual_v2",
+        output_format="mp3_44100_128",
+    )
+    with open(dest, "wb") as f:
+        for chunk in audio:
+            f.write(chunk)
+
+
+def main() -> None:
+    api_key = os.getenv("ELEVENLABS_API_KEY", "")
+    if not api_key or api_key == "your_key_here":
+        raise SystemExit("[ERROR] .env 파일에 유효한 ELEVENLABS_API_KEY를 설정해 주세요.")
+
+    client = ElevenLabs(api_key=api_key)
+
+    for voice_name in VOICES:
+        (EN_DIR / voice_name).mkdir(parents=True, exist_ok=True)
+
+    words = load_words(WORDS_FILE)
+    print(f"단어 {len(words)}개 로드 완료\n")
+
+    success: list[str] = []
+    failed: list[str] = []
+
+    for word, ko_pron, phoneme in words:
+        for voice_name, voice_id in VOICES.items():
+            dest = EN_DIR / voice_name / f"{word}.mp3"
+            try:
+                generate_elevenlabs(client, word, voice_id, dest)
+                success.append(str(dest))
+                print(f"[OK]  {dest}")
+            except Exception as e:
+                failed.append(str(dest))
+                print(f"[FAIL] {dest}: {e}")
+
+    print("\n=== 결과 ===")
+    print(f"성공 ({len(success)}개):")
+    for p in success:
+        print(f"  [OK]  {p}")
+
+    if failed:
+        print(f"\n실패 ({len(failed)}개):")
+        for p in failed:
+            print(f"  [ERR] {p}")
+
+    print(f"\n총 생성 파일: {len(success)} / {len(success) + len(failed)}")
+
+
+if __name__ == "__main__":
+    main()
