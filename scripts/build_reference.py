@@ -16,8 +16,6 @@ from pipeline.audio import load_and_trim_audio
 from pipeline.features import extract_features
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
 DEFAULT_WORDS_PATH = PROJECT_ROOT / "data" / "words.txt"
 DEFAULT_REFERENCE_AUDIO_DIR = PROJECT_ROOT / "data" / "reference_en"
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "data" / "reference_vectors.json"
