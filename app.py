@@ -1,7 +1,7 @@
 import csv
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 import gradio as gr
 
@@ -21,429 +21,366 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 RESULTS_PATH = PROJECT_ROOT / "data" / "results.csv"
 
 
+# ── Waveform bars (decorative) ────────────────────────────────────────────────
+_WAVE_H = [8, 14, 22, 28, 18, 34, 24, 38, 26, 18, 32, 20, 28, 36, 22, 16, 30, 24, 38, 12]
+_WAVE_BARS = "".join(
+    f'<span style="height:{h}px;animation-delay:{i*0.07:.2f}s"></span>'
+    for i, h in enumerate(_WAVE_H)
+)
+_REC_VISUAL_HTML = f"""
+<div class="rec-visual">
+  <div class="rec-circles">
+    <div class="rec-ring1"></div>
+    <div class="rec-ring2"></div>
+    <div class="rec-core">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none"
+           stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+      </svg>
+    </div>
+  </div>
+  <div class="waveform">{_WAVE_BARS}</div>
+</div>
+"""
+
+_LOADING_HTML = """
+<div class="loading-wrap">
+  <div class="spinner-ring"></div>
+  <div class="loading-text">발음을 분석하고 있습니다...</div>
+</div>
+"""
+
 CUSTOM_CSS = """
-:root {
-  --bg-1: #e8f6ff;
-  --bg-2: #d4efff;
-  --card: rgba(255, 255, 255, 0.90);
-  --card-strong: rgba(255, 255, 255, 0.97);
-  --line: rgba(76, 152, 210, 0.16);
-  --text-1: #0f2a40;
-  --text-2: #4a6a88;
-  --text-3: #7a99b8;
-  --primary: #3eaeff;
-  --primary-dark: #1a8fe0;
-  --accent: #7c6fff;
-  --success: #12b8b8;
-  --warn: #ff7c3e;
-  --shadow-sm: 0 4px 16px rgba(60, 120, 180, 0.10);
-  --shadow-md: 0 12px 36px rgba(60, 120, 180, 0.14);
-  --shadow-lg: 0 24px 60px rgba(60, 120, 180, 0.18);
-  --radius-xl: 28px;
-  --radius-lg: 22px;
-  --radius-md: 16px;
-  --radius-sm: 12px;
-}
-
-/* ── Base ──────────────────────────────────────── */
-body, .gradio-container {
-  background: linear-gradient(155deg, #f0faff 0%, #e4f5ff 40%, #ddf0ff 100%) !important;
+/* ── Base ───────────────────────────────────── */
+body,
+.gradio-container {
+  background: linear-gradient(160deg, #e8f4fd 0%, #dbeafe 100%) !important;
+  background-attachment: fixed !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+               "Apple SD Gothic Neo", sans-serif !important;
   min-height: 100vh;
-  color: var(--text-1);
-  font-family: "Segoe UI", "Apple SD Gothic Neo", "Pretendard", sans-serif;
+  color: #1e293b;
 }
+footer { display: none !important; }
 
-/* ── Shell ─────────────────────────────────────── */
+/* ── Center shell ───────────────────────────── */
 .app-shell {
-  max-width: 1160px;
-  margin: 0 auto;
-  padding: 16px 10px 40px;
+  max-width: 420px !important;
+  margin: 0 auto !important;
+  padding: 24px 0 80px !important;
 }
-
-/* ── Hero ──────────────────────────────────────── */
-.hero-card {
-  background: linear-gradient(130deg, #2baeff 0%, #5b88ff 55%, #9b7aff 100%);
-  border-radius: 32px;
-  padding: 34px 36px 32px;
-  margin-bottom: 24px;
-  box-shadow: 0 28px 64px rgba(43, 110, 255, 0.28);
-  position: relative;
-  overflow: hidden;
-}
-
-.hero-card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at 80% 20%, rgba(255,255,255,0.12) 0%, transparent 60%);
-  pointer-events: none;
-}
-
-.hero-badge {
-  display: inline-block;
-  background: rgba(255, 255, 255, 0.20);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  color: rgba(255, 255, 255, 0.95);
-  padding: 6px 14px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.10em;
-  margin-bottom: 14px;
-  text-transform: uppercase;
-}
-
-.hero-title {
-  font-size: 36px;
-  font-weight: 800;
-  color: #ffffff;
-  line-height: 1.15;
-  margin-bottom: 10px;
-}
-
-.hero-subtitle {
-  font-size: 14.5px;
-  color: rgba(255, 255, 255, 0.88);
-  line-height: 1.75;
-  max-width: 720px;
-}
-
-/* ── Generic panel card ────────────────────────── */
-.panel-card {
-  background: var(--card);
-  backdrop-filter: blur(14px);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-md);
-  padding: 24px;
-}
-
-.section-title {
-  font-size: 11.5px;
-  font-weight: 800;
-  letter-spacing: 0.10em;
-  color: var(--text-3);
-  margin-bottom: 14px;
-  text-transform: uppercase;
-}
-
-/* ── Target card ───────────────────────────────── */
-.target-card {
-  background: linear-gradient(160deg, #ffffff 0%, #f0f9ff 100%);
-  border: 1px solid rgba(62, 174, 255, 0.20);
-  border-radius: 26px;
-  padding: 24px 22px;
-  min-height: 248px;
-  box-shadow: var(--shadow-sm);
-}
-
-.target-eyebrow {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  color: var(--text-3);
-  text-transform: uppercase;
-  margin-bottom: 10px;
-}
-
-.target-word {
-  font-size: 44px;
-  font-weight: 800;
-  color: var(--text-1);
-  line-height: 1.1;
-  margin-bottom: 12px;
-  letter-spacing: -0.01em;
-}
-
-.target-phoneme {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: linear-gradient(135deg, rgba(62, 174, 255, 0.14), rgba(124, 111, 255, 0.14));
-  color: #1a5a8a;
-  border: 1px solid rgba(62, 174, 255, 0.26);
-  border-radius: 999px;
-  font-size: 19px;
-  font-weight: 800;
-  padding: 10px 20px;
-  margin-bottom: 14px;
-}
-
-.target-hint {
-  color: var(--text-2);
-  font-size: 14px;
-  line-height: 1.75;
-}
-
-.target-hint strong {
-  color: var(--text-1);
-}
-
-/* ── Info card ─────────────────────────────────── */
-.info-card {
-  background: linear-gradient(160deg, #ffffff 0%, #edf7ff 100%);
-  border: 1px solid rgba(62, 174, 255, 0.16);
-  border-radius: 24px;
-  padding: 22px 20px;
-  min-height: 248px;
-  box-shadow: var(--shadow-sm);
-}
-
-.info-card ul {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--text-2);
-  line-height: 1.9;
-  font-size: 14.5px;
-}
-
-.info-card li {
-  margin-bottom: 6px;
-}
-
-/* ── Audio panel ───────────────────────────────── */
-#audio-panel {
-  margin-top: 22px;
-}
-
-#audio-panel .wrap,
-#audio-panel .block {
-  border-radius: 20px !important;
-}
-
-.compact-note {
-  font-size: 13px;
-  color: var(--text-3);
-  line-height: 1.7;
-  padding: 2px 0;
-}
-
-/* ── Buttons ───────────────────────────────────── */
-#score-btn {
-  background: linear-gradient(130deg, #3eaeff, #7c6fff) !important;
+.app-shell > .form,
+.app-shell > div {
+  gap: 0 !important;
+  padding: 0 !important;
   border: none !important;
-  border-radius: 14px !important;
-  font-size: 15px !important;
-  font-weight: 700 !important;
-  color: #ffffff !important;
-  padding: 12px 28px !important;
-  box-shadow: 0 8px 24px rgba(62, 174, 255, 0.32) !important;
-  transition: filter 0.15s, transform 0.12s, box-shadow 0.15s !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
-#score-btn:hover {
-  filter: brightness(1.08) !important;
-  transform: translateY(-1px) !important;
-  box-shadow: 0 12px 32px rgba(62, 174, 255, 0.40) !important;
+/* ── White screen card ──────────────────────── */
+.screen-card {
+  background: #ffffff;
+  border-radius: 24px;
+  box-shadow: 0 4px 28px rgba(30, 64, 175, 0.10);
+  overflow: hidden;
+  margin: 0 12px;
+}
+.screen-card > .form,
+.screen-card > div {
+  gap: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
 }
 
-#score-btn:active {
-  transform: translateY(0) !important;
+/* ── Welcome — gradient header ──────────────── */
+.w-header {
+  background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+  padding: 36px 24px 28px;
+  text-align: center;
+  color: #ffffff;
+}
+.w-logo      { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 6px; }
+.w-subtitle  { font-size: 13.5px; opacity: 0.90; letter-spacing: 0.01em; }
+.w-desc      { font-size: 12.5px; opacity: 0.78; margin-top: 8px; line-height: 1.5; }
+
+/* ── Welcome — 3-step cards ─────────────────── */
+.steps-row {
+  display: flex;
+  gap: 10px;
+  padding: 20px 18px 4px;
+}
+.step-item {
+  flex: 1;
+  background: #f0f7ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 16px;
+  padding: 14px 8px;
+  text-align: center;
+}
+.step-num {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: #3b82f6;
+  color: #ffffff;
+  font-size: 13px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 8px;
+}
+.step-title { font-size: 12.5px; font-weight: 700; color: #1e40af; margin-bottom: 4px; }
+.step-desc  { font-size: 11px; color: #64748b; line-height: 1.4; }
+
+/* ── Welcome — body area ────────────────────── */
+.w-body > .form,
+.w-body > div {
+  padding: 14px 18px 6px !important;
+  gap: 10px !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
-#clear-btn {
-  border-radius: 14px !important;
-  font-weight: 600 !important;
+.w-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 13px;
+  min-height: 46px;
+}
+.w-preview-word    { font-size: 20px; font-weight: 800; color: #1e40af; }
+.w-preview-phoneme {
+  font-size: 13px; font-weight: 700; color: #1d4ed8;
+  background: #dbeafe; border-radius: 999px; padding: 3px 10px;
+}
+.w-error {
+  color: #ef4444; font-size: 13px; font-weight: 600;
+  padding: 2px 0; min-height: 20px;
 }
 
-/* ── Status ────────────────────────────────────── */
-#status-markdown p {
-  margin: 6px 0;
-  color: var(--warn);
-  font-weight: 600;
+/* ── Buttons ────────────────────────────────── */
+#btn-start {
+  background: #3b82f6 !important; color: #ffffff !important;
+  border: none !important; border-radius: 14px !important;
+  height: 52px !important; font-size: 16px !important; font-weight: 600 !important;
+  width: 100% !important;
+  box-shadow: 0 4px 16px rgba(59,130,246,0.32) !important;
+  transition: filter .15s, transform .12s !important;
+  margin: 4px 0 18px;
+}
+#btn-start:hover { filter: brightness(1.08) !important; transform: translateY(-1px) !important; }
+
+#btn-back {
+  background: transparent !important; border: none !important;
+  color: #3b82f6 !important; font-size: 14px !important; font-weight: 600 !important;
+  padding: 14px 20px 6px !important; height: auto !important;
+  box-shadow: none !important; text-align: left !important; width: auto !important;
 }
 
-/* ── Results shell ─────────────────────────────── */
-.results-shell {
-  margin-top: 24px;
+#btn-analyze {
+  background: #3b82f6 !important; color: #ffffff !important;
+  border: none !important; border-radius: 14px !important;
+  height: 52px !important; font-size: 16px !important; font-weight: 600 !important;
+  width: 100% !important;
+  box-shadow: 0 4px 16px rgba(59,130,246,0.32) !important;
+  transition: filter .15s, transform .12s !important;
+}
+#btn-analyze:hover { filter: brightness(1.08) !important; transform: translateY(-1px) !important; }
+
+#btn-try-again {
+  background: #ffffff !important; border: 1.5px solid #3b82f6 !important;
+  color: #3b82f6 !important; border-radius: 14px !important;
+  height: 48px !important; font-size: 14px !important; font-weight: 600 !important;
+}
+#btn-change-word {
+  background: #3b82f6 !important; color: #ffffff !important;
+  border: none !important; border-radius: 14px !important;
+  height: 48px !important; font-size: 14px !important; font-weight: 600 !important;
 }
 
-/* ── Score card ────────────────────────────────── */
+/* ── Practice — word display ────────────────── */
+.pw-section {
+  padding: 16px 20px 14px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.pw-label   { font-size: 11px; font-weight: 700; letter-spacing: .10em; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px; }
+.pw-word    { font-size: 48px; font-weight: 700; color: #1e293b; line-height: 1; margin-bottom: 8px; letter-spacing: -0.02em; }
+.pw-phoneme {
+  display: inline-block; background: #eff6ff; color: #1d4ed8;
+  border-radius: 999px; font-size: 20px; font-weight: 700;
+  padding: 8px 18px; margin-bottom: 10px;
+}
+.pw-hint { font-size: 14px; color: #64748b; line-height: 1.6; }
+
+/* ── Practice — recording zone (dark) ──────── */
+#recording-zone {
+  background: linear-gradient(160deg, #1e3058 0%, #18264a 100%) !important;
+  border-radius: 0 !important;
+}
+#recording-zone > .form,
+#recording-zone > div {
+  background: transparent !important;
+  border: none !important;
+  gap: 0 !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+.rec-visual {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 28px 20px 18px;
+}
+.rec-circles {
+  position: relative; width: 144px; height: 144px;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 22px;
+}
+.rec-ring1 {
+  position: absolute; width: 144px; height: 144px; border-radius: 50%;
+  background: rgba(59,130,246,0.12);
+  animation: pulseRing 2.2s ease-out infinite;
+}
+.rec-ring2 {
+  position: absolute; width: 112px; height: 112px; border-radius: 50%;
+  background: rgba(59,130,246,0.18);
+  animation: pulseRing 2.2s ease-out infinite .45s;
+}
+.rec-core {
+  position: relative; width: 80px; height: 80px; border-radius: 50%;
+  background: linear-gradient(145deg, #4f9cf0, #2563eb);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8px 24px rgba(37,99,235,.55);
+}
+@keyframes pulseRing {
+  0%   { transform: scale(.85); opacity: .8; }
+  65%  { transform: scale(1);   opacity: .25; }
+  100% { transform: scale(1);   opacity: 0; }
+}
+.waveform { display: flex; align-items: center; gap: 3px; height: 38px; }
+.waveform span {
+  display: inline-block; width: 3px;
+  background: rgba(148,196,255,.55); border-radius: 2px;
+  animation: waveAnim 1.6s ease-in-out infinite;
+}
+@keyframes waveAnim {
+  0%, 100% { transform: scaleY(.35); }
+  50%       { transform: scaleY(1); }
+}
+
+/* Style the Gradio Audio inside the dark zone */
+#audio-practice label        { color: rgba(255,255,255,0.55) !important; font-size: 12px !important; }
+#audio-practice .wrap        { background: rgba(15,30,70,.55) !important; border-color: rgba(59,130,246,.28) !important; border-radius: 16px !important; margin: 0 16px 18px !important; }
+#audio-practice .icon-button { color: rgba(255,255,255,.8) !important; }
+#audio-practice .waveform    { color: #60a5fa !important; }
+
+/* Practice status / error */
+.p-status > p, .p-status p {
+  color: #ef4444; font-size: 13px; font-weight: 600;
+  padding: 6px 20px 0; margin: 0;
+}
+
+/* Analyze btn wrapper padding */
+.analyze-wrap > .form,
+.analyze-wrap > div {
+  padding: 0 18px 20px !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* ── Result screen ──────────────────────────── */
+.result-target {
+  display: flex; align-items: center; gap: 10px;
+  padding: 18px 18px 0;
+}
+.result-word { font-size: 26px; font-weight: 800; color: #1e293b; }
+.result-phoneme-pill {
+  background: #eff6ff; color: #1d4ed8;
+  border: 1px solid #bfdbfe; border-radius: 999px;
+  font-size: 14px; font-weight: 700; padding: 5px 12px;
+}
+
 .score-card {
-  background: linear-gradient(160deg, #ffffff 0%, #eef9ff 100%);
-  border: 1px solid rgba(62, 174, 255, 0.18);
-  border-radius: 28px;
-  padding: 28px 22px;
-  min-height: 370px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  box-shadow: var(--shadow-md);
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  border-radius: 20px; margin: 12px 16px 0;
+  padding: 26px 20px; text-align: center; color: #ffffff;
 }
+.score-lbl  { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; opacity: .78; margin-bottom: 8px; }
+.score-num  { font-size: 72px; font-weight: 800; line-height: 1; letter-spacing: -0.03em; }
+.score-max  { font-size: 18px; opacity: .65; }
+.score-grade { font-size: 20px; font-weight: 700; margin-top: 8px; }
+.score-grade-sub { font-size: 13.5px; opacity: .85; margin-top: 3px; }
 
-.score-kicker {
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--text-3);
-  text-align: center;
-  margin-bottom: 18px;
-}
-
-.score-ring {
-  width: 220px;
-  height: 220px;
-  border-radius: 50%;
-  background: conic-gradient(from 190deg, #3eaeff 0%, #7c6fff 55%, #a8f0ff 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 20px;
-  box-shadow: 0 16px 48px rgba(62, 174, 255, 0.30);
-}
-
-.score-ring-inner {
-  width: 180px;
-  height: 180px;
-  border-radius: 50%;
-  background: linear-gradient(180deg, #ffffff, #eef8ff);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.score-number {
-  font-size: 52px;
-  font-weight: 800;
-  color: var(--text-1);
-  line-height: 1;
-  letter-spacing: -0.02em;
-}
-
-.score-label {
-  margin-top: 6px;
-  font-size: 13px;
-  color: var(--text-3);
-  font-weight: 600;
-}
-
-.score-caption {
-  text-align: center;
-  color: var(--text-2);
-  font-size: 14px;
-  line-height: 1.75;
-}
-
-.score-caption strong {
-  color: var(--text-1);
-  font-size: 16px;
-}
-
-/* ── Feedback card ─────────────────────────────── */
 .feedback-card {
-  background: linear-gradient(160deg, #ffffff 0%, #f0f8ff 100%);
-  border: 1px solid rgba(62, 174, 255, 0.18);
-  border-radius: 28px;
-  padding: 26px 24px;
-  min-height: 370px;
-  box-shadow: var(--shadow-md);
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 18px;
+  padding: 18px; margin: 12px 16px 0;
+}
+.feedback-lbl  { font-size: 11px; font-weight: 700; letter-spacing: .10em; text-transform: uppercase; color: #94a3b8; margin-bottom: 8px; }
+.feedback-body { font-size: 14.5px; color: #334155; line-height: 1.75; }
+
+.metrics-card {
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 18px;
+  padding: 18px; margin: 12px 16px 0;
+}
+.metrics-lbl { font-size: 11px; font-weight: 700; letter-spacing: .10em; text-transform: uppercase; color: #94a3b8; margin-bottom: 12px; }
+.m-row       { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+.m-name      { font-size: 12px; font-weight: 600; color: #64748b; width: 80px; flex-shrink: 0; text-align: right; }
+.m-track     { flex: 1; height: 7px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+.m-fill      { height: 100%; background: linear-gradient(90deg, #3b82f6, #6366f1); border-radius: 999px; }
+.m-val       { font-size: 13px; font-weight: 700; color: #1e40af; width: 36px; text-align: right; flex-shrink: 0; }
+
+.result-actions > .form,
+.result-actions > div {
+  padding: 14px 16px 24px !important;
+  gap: 10px !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
-#feedback-markdown h3 {
-  margin-top: 0;
-  font-size: 15px;
-  color: var(--text-1);
-  font-weight: 800;
+/* ── Loading spinner ────────────────────────── */
+.loading-wrap {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 52px 20px; gap: 16px;
 }
-
-#feedback-markdown h4 {
-  margin-top: 14px;
-  font-size: 13px;
-  color: var(--text-2);
-  font-weight: 700;
+.spinner-ring {
+  width: 48px; height: 48px;
+  border: 4px solid rgba(59,130,246,.18);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
 }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 15px; color: #64748b; font-weight: 500; }
 
-#feedback-markdown p,
-#feedback-markdown li {
-  color: var(--text-2);
-  line-height: 1.80;
-  font-size: 14px;
-}
-
-#feedback-markdown code {
-  background: rgba(62, 174, 255, 0.12);
-  color: #1a5a8a;
-  border-radius: 6px;
-  padding: 2px 7px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-/* ── Metric grid ───────────────────────────────── */
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.metric-card {
-  background: linear-gradient(160deg, #ffffff, #eef7ff);
-  border: 1px solid rgba(62, 174, 255, 0.15);
-  border-radius: 18px;
-  padding: 16px 18px;
-  box-shadow: var(--shadow-sm);
-}
-
-.metric-label {
-  color: var(--text-3);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
-  margin-bottom: 8px;
-}
-
-.metric-value {
-  color: var(--text-1);
-  font-size: 26px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-}
-
-/* ── Footer ────────────────────────────────────── */
-.footer-note {
-  margin-top: 28px;
-  text-align: center;
-  color: var(--text-3);
-  font-size: 12.5px;
-  line-height: 1.7;
-}
-
-/* ── Mobile ────────────────────────────────────── */
-@media (max-width: 860px) {
-  .hero-title { font-size: 28px; }
-  .hero-card  { padding: 24px 20px; }
-
-  .target-word { font-size: 36px; }
-
-  .score-ring       { width: 190px; height: 190px; }
-  .score-ring-inner { width: 154px; height: 154px; }
-  .score-number     { font-size: 44px; }
-
-  .metric-grid { grid-template-columns: repeat(2, 1fr); }
-}
-
+/* ── Mobile ─────────────────────────────────── */
 @media (max-width: 480px) {
-  .hero-title { font-size: 24px; }
-  .score-ring       { width: 160px; height: 160px; }
-  .score-ring-inner { width: 128px; height: 128px; }
-  .score-number     { font-size: 36px; }
-  .metric-grid { grid-template-columns: 1fr 1fr; }
+  .app-shell { padding: 0 0 60px !important; }
+  .screen-card { margin: 0; border-radius: 0 0 20px 20px; }
+  .w-header { border-radius: 0; }
+  .steps-row { flex-direction: column; gap: 8px; }
+  .pw-word  { font-size: 40px; }
+  .score-num { font-size: 60px; }
 }
 """
 
+
+# ── CSV helpers ───────────────────────────────────────────────────────────────
 
 def ensure_results_csv() -> None:
     RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     if RESULTS_PATH.exists():
         return
     with RESULTS_PATH.open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
+        csv.writer(f).writerow([
             "timestamp", "target_word", "korean_pronunciation", "phoneme",
             "score", "feedback",
             "mfcc_score", "duration_score", "rms_score", "zcr_score", "spectral_centroid_score",
@@ -457,125 +394,169 @@ def save_result(
     result: dict[str, Any],
 ) -> None:
     ensure_results_csv()
-    details = result.get("details", {})
+    d = result.get("details", {})
     with RESULTS_PATH.open("a", encoding="utf-8-sig", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
+        csv.writer(f).writerow([
             datetime.now().isoformat(timespec="seconds"),
             target_word, korean_pronunciation, phoneme,
             result.get("score"), result.get("feedback"),
-            details.get("mfcc_score", ""),
-            details.get("duration_score", ""),
-            details.get("rms_score", ""),
-            details.get("zcr_score", ""),
-            details.get("spectral_centroid_score", ""),
+            d.get("mfcc_score", ""), d.get("duration_score", ""),
+            d.get("rms_score", ""), d.get("zcr_score", ""),
+            d.get("spectral_centroid_score", ""),
         ])
 
 
-REFERENCE_VECTORS = load_reference_vectors()
-TARGET_WORDS = get_available_targets()
-TARGET_INDEX = build_target_index(TARGET_WORDS)
-GRADIO_CHOICES = get_gradio_choices(TARGET_WORDS)
+# ── App data init ─────────────────────────────────────────────────────────────
+
+def _init() -> tuple[dict, list, dict, list, str | None]:
+    try:
+        ref   = load_reference_vectors()
+        words = get_available_targets()
+        index = build_target_index(words)
+        choices = get_gradio_choices(words)
+        if not choices:
+            raise ValueError("사용 가능한 단어가 없습니다.")
+        return ref, words, index, choices, None
+    except Exception as e:
+        return {}, [], {}, [], f"{type(e).__name__}: {e}"
 
 
-def render_target_card(target_id: str | None) -> str:
+REFERENCE_VECTORS, TARGET_WORDS, TARGET_INDEX, GRADIO_CHOICES, STARTUP_ERROR = _init()
+
+
+# ── Render helpers ────────────────────────────────────────────────────────────
+
+def render_welcome_preview(target_id: str | None) -> str:
     if not target_id or target_id not in TARGET_INDEX:
-        return """
-        <div class="target-card">
-          <div class="target-eyebrow">Target Word</div>
-          <div class="target-word">—</div>
-          <div class="target-phoneme">/ - /</div>
-          <div class="target-hint">드롭다운에서 연습할 단어를 선택해주세요.</div>
-        </div>
-        """
-    target = TARGET_INDEX[target_id]
+        return '<div class="w-preview" style="opacity:.45;">단어를 선택하면 미리보기가 표시됩니다</div>'
+    t = TARGET_INDEX[target_id]
     return f"""
-    <div class="target-card">
-      <div class="target-eyebrow">Target Word</div>
-      <div class="target-word">{target.word}</div>
-      <div class="target-phoneme">/{target.phoneme}/</div>
-      <div class="target-hint">
-        <strong>한국어 힌트</strong> &nbsp;·&nbsp; {target.korean_pronunciation}<br>
-        발음기호를 확인한 뒤 아래에서 녹음하거나 파일을 업로드하세요.
-      </div>
+    <div class="w-preview">
+      <span class="w-preview-word">{t.word}</span>
+      <span class="w-preview-phoneme">/{t.phoneme}/</span>
     </div>
     """
 
 
-def render_score_card(score: float) -> str:
+def render_practice_header(target_id: str | None) -> str:
+    if not target_id or target_id not in TARGET_INDEX:
+        return ""
+    t = TARGET_INDEX[target_id]
+    return f"""
+    <div class="pw-section">
+      <div class="pw-label">Target Word</div>
+      <div class="pw-word">{t.word}</div>
+      <div class="pw-phoneme">/{t.phoneme}/</div>
+      <div class="pw-hint">한국어 힌트: {t.korean_pronunciation}</div>
+    </div>
+    """
+
+
+def render_result_content(target: Any, result: dict[str, Any]) -> str:
+    score    = float(result["score"])
+    feedback = result["feedback"]
+    details  = result.get("details", {})
+
     if score >= 85:
-        caption, sub = "Excellent", "기준 발음과 상당히 유사합니다."
+        grade, grade_sub = "Excellent", "기준 발음과 상당히 유사합니다."
     elif score >= 70:
-        caption, sub = "Good", "대체로 좋지만 조금 더 다듬을 수 있습니다."
+        grade, grade_sub = "Good", "전반적으로 좋지만 더 다듬을 수 있습니다."
     else:
-        caption, sub = "Needs Practice", "조금 더 반복 연습이 필요합니다."
+        grade, grade_sub = "Needs Practice", "조금 더 반복 연습해보세요."
 
-    return f"""
-    <div class="score-card">
-      <div class="score-kicker">Pronunciation Score</div>
-      <div class="score-ring">
-        <div class="score-ring-inner">
-          <div class="score-number">{score:.1f}</div>
-          <div class="score-label">/ 100</div>
-        </div>
-      </div>
-      <div class="score-caption">
-        <strong>{caption}</strong><br>{sub}
-      </div>
-    </div>
-    """
-
-
-def render_details_html(details: dict[str, Any]) -> str:
     label_map = {
         "mfcc_score": "MFCC",
         "duration_score": "Duration",
         "rms_score": "RMS",
         "zcr_score": "ZCR",
-        "spectral_centroid_score": "Spectral Centroid",
+        "spectral_centroid_score": "Spectral",
     }
-    cards = [
-        f"""<div class="metric-card">
-              <div class="metric-label">{label}</div>
-              <div class="metric-value">{details[key]}</div>
-            </div>"""
-        for key, label in label_map.items()
-        if key in details and details[key] != ""
-    ]
-    if not cards:
-        return ""
-    return f'<div class="metric-grid">{"".join(cards)}</div>'
+    rows = "".join(
+        f'<div class="m-row">'
+        f'<div class="m-name">{lbl}</div>'
+        f'<div class="m-track"><div class="m-fill" style="width:{details[k]}%"></div></div>'
+        f'<div class="m-val">{details[k]}</div>'
+        f'</div>'
+        for k, lbl in label_map.items()
+        if details.get(k) not in ("", None)
+    )
 
-
-def render_feedback_markdown(
-    target_word: str, phoneme: str, korean_hint: str, feedback: str
-) -> str:
     return f"""
-### 분석 결과
+    <div class="result-target">
+      <div class="result-word">{target.word}</div>
+      <div class="result-phoneme-pill">/{target.phoneme}/</div>
+    </div>
+    <div class="score-card">
+      <div class="score-lbl">Pronunciation Score</div>
+      <div><span class="score-num">{score:.0f}</span><span class="score-max"> / 100</span></div>
+      <div class="score-grade">{grade}</div>
+      <div class="score-grade-sub">{grade_sub}</div>
+    </div>
+    <div class="feedback-card">
+      <div class="feedback-lbl">Feedback</div>
+      <div class="feedback-body">{feedback}</div>
+    </div>
+    {"" if not rows else f'<div class="metrics-card"><div class="metrics-lbl">Detailed Metrics</div>{rows}</div>'}
+    """
 
-- **타겟 단어**: `{target_word}`
-- **타겟 발음기호**: `/{phoneme}/`
-- **한국어 힌트**: `{korean_hint}`
 
-### 피드백
+# ── Event handlers ────────────────────────────────────────────────────────────
 
-{feedback}
-"""
+def on_target_change(target_id: str) -> str:
+    # outputs(1): [welcome_word_preview]
+    return render_welcome_preview(target_id)
 
 
-def on_target_change(target_id: str) -> tuple[str, str, gr.update]:
-    return render_target_card(target_id), "", gr.update(visible=False)
+def start_practice(target_id: str) -> tuple:
+    # outputs(5): [screen_welcome, screen_practice, screen_result, practice_header, welcome_error]
+    if not target_id:
+        return (
+            gr.update(visible=True),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            "",
+            '<div class="w-error">단어를 먼저 선택해주세요.</div>',
+        )
+    return (
+        gr.update(visible=False),
+        gr.update(visible=True),
+        gr.update(visible=False),
+        render_practice_header(target_id),
+        "",
+    )
 
 
-def score_audio(
+def go_to_welcome() -> tuple:
+    # outputs(3): [screen_welcome, screen_practice, screen_result]
+    return (
+        gr.update(visible=True),
+        gr.update(visible=False),
+        gr.update(visible=False),
+    )
+
+
+def analyze_pronunciation(
     target_id: str,
     audio_file: str | None,
-) -> tuple[str, gr.update, str, str, str]:
-    if not target_id:
-        return "먼저 타겟 단어를 선택해주세요.", gr.update(visible=False), "", "", ""
+) -> Generator:
+    # Generator — outputs(4): [screen_practice, screen_result, result_content, practice_status]
 
-    if audio_file is None:
-        return "먼저 음성을 녹음하거나 업로드해주세요.", gr.update(visible=False), "", "", ""
+    if not audio_file:
+        yield (
+            gr.update(visible=True),
+            gr.update(visible=False),
+            "",
+            "음성을 녹음하거나 파일을 업로드해주세요.",
+        )
+        return
+
+    # Show loading screen
+    yield (
+        gr.update(visible=False),
+        gr.update(visible=True),
+        _LOADING_HTML,
+        "",
+    )
 
     try:
         target, reference = get_reference_for_target_id(
@@ -584,9 +565,9 @@ def score_audio(
             reference_vectors=REFERENCE_VECTORS,
         )
         y, sr = load_and_trim_audio(audio_file)
-        user_features = extract_features(y, sr)
+        features = extract_features(y, sr)
         result = score_pronunciation(
-            user_features=user_features,
+            user_features=features,
             reference=reference,
             phoneme=target.phoneme,
         )
@@ -596,132 +577,189 @@ def score_audio(
             phoneme=target.phoneme,
             result=result,
         )
-        return (
-            "",
-            gr.update(visible=True),
-            render_score_card(result["score"]),
-            render_feedback_markdown(
-                target_word=target.word,
-                phoneme=target.phoneme,
-                korean_hint=target.korean_pronunciation,
-                feedback=result["feedback"],
-            ),
-            render_details_html(result.get("details", {})),
-        )
-    except Exception as e:
-        return (
-            f"채점 중 오류가 발생했습니다: {type(e).__name__} — {e}",
+        yield (
             gr.update(visible=False),
-            "", "", "",
+            gr.update(visible=True),
+            render_result_content(target, result),
+            "",
         )
 
+    except Exception as e:
+        yield (
+            gr.update(visible=False),
+            gr.update(visible=True),
+            f'<div class="loading-wrap"><div class="loading-text">오류: {type(e).__name__} — {e}</div></div>',
+            "",
+        )
+
+
+def try_again(target_id: str) -> tuple:
+    # outputs(5): [screen_practice, screen_result, practice_header, audio_input, practice_status]
+    return (
+        gr.update(visible=True),
+        gr.update(visible=False),
+        render_practice_header(target_id),
+        None,
+        "",
+    )
+
+
+def change_word() -> tuple:
+    # outputs(4): [screen_welcome, screen_practice, screen_result, audio_input]
+    return (
+        gr.update(visible=True),
+        gr.update(visible=False),
+        gr.update(visible=False),
+        None,
+    )
+
+
+# ── UI ────────────────────────────────────────────────────────────────────────
 
 def build_app() -> gr.Blocks:
     theme = gr.themes.Soft(
-        primary_hue="sky",
-        secondary_hue="blue",
+        primary_hue="blue",
+        secondary_hue="indigo",
         neutral_hue="slate",
     )
+    default_id = GRADIO_CHOICES[0][1] if GRADIO_CHOICES else None
 
-    default_target_id = GRADIO_CHOICES[0][1] if GRADIO_CHOICES else None
-
-    with gr.Blocks(title="Pronunciation Design", theme=theme, css=CUSTOM_CSS) as demo:
+    with gr.Blocks(title="PronounceAI", theme=theme, css=CUSTOM_CSS) as demo:
         with gr.Column(elem_classes=["app-shell"]):
 
-            # ── Hero ──────────────────────────────────────
-            gr.HTML("""
-            <div class="hero-card">
-              <div class="hero-badge">PRONUNCIATION DESIGN</div>
-              <div class="hero-title">English Pronunciation Scoring</div>
-              <div class="hero-subtitle">
-                원어민 기준 벡터와 사용자의 발음을 비교해
-                MFCC · ZCR · Duration · RMS 기반 유사도 점수를 제공합니다.<br>
-                단어 하나를 선택한 뒤 음성을 녹음하거나 업로드해보세요.
-              </div>
-            </div>
-            """)
+            # ════════════════════════════════════════
+            # SCREEN 1 — Welcome
+            # ════════════════════════════════════════
+            with gr.Column(
+                visible=True, elem_id="screen_welcome", elem_classes=["screen-card"]
+            ) as screen_welcome:
 
-            # ── Target selection + Guide ──────────────────
-            with gr.Row(equal_height=True):
-                with gr.Column(scale=5):
-                    gr.HTML('<div class="section-title">Target Selection</div>')
+                gr.HTML("""
+                <div class="w-header">
+                  <div class="w-logo">PronounceAI</div>
+                  <div class="w-subtitle">Korean English Pronunciation Coach</div>
+                  <div class="w-desc">한국인 학습자를 위한 AI 발음 채점 앱</div>
+                </div>
+                <div class="steps-row">
+                  <div class="step-item">
+                    <div class="step-num">1</div>
+                    <div class="step-title">단어 선택</div>
+                    <div class="step-desc">연습할 단어를 선택하세요</div>
+                  </div>
+                  <div class="step-item">
+                    <div class="step-num">2</div>
+                    <div class="step-title">녹음</div>
+                    <div class="step-desc">단어를 발음하고 녹음하세요</div>
+                  </div>
+                  <div class="step-item">
+                    <div class="step-num">3</div>
+                    <div class="step-title">분석</div>
+                    <div class="step-desc">AI가 채점하고 피드백을 드립니다</div>
+                  </div>
+                </div>
+                """)
+
+                with gr.Column(elem_classes=["w-body"]):
                     target_dropdown = gr.Dropdown(
                         choices=GRADIO_CHOICES,
-                        value=default_target_id,
+                        value=default_id,
                         label="연습할 단어 선택",
-                        info="단어와 타겟 발음기호를 확인한 뒤 채점해보세요.",
+                        interactive=not bool(STARTUP_ERROR),
                     )
-                    target_card = gr.HTML(value=render_target_card(default_target_id))
+                    welcome_word_preview = gr.HTML(
+                        value=render_welcome_preview(default_id)
+                    )
+                    welcome_error = gr.HTML("")
 
-                with gr.Column(scale=4):
-                    gr.HTML('<div class="section-title">Guide</div>')
-                    gr.HTML("""
-                    <div class="info-card">
-                      <ul>
-                        <li>타겟 단어를 선택한 뒤 발음기호를 먼저 확인하세요.</li>
-                        <li>아래 녹음 영역에서 직접 말하거나 mp3 / wav 파일을 업로드하세요.</li>
-                        <li>점수와 피드백은 음성 입력 후 <strong>채점하기</strong>를 눌러야 표시됩니다.</li>
-                        <li>마이크가 안 되면 브라우저 마이크 권한을 허용해주세요.</li>
-                      </ul>
-                    </div>
-                    """)
-
-            # ── Audio input ───────────────────────────────
-            with gr.Column(elem_id="audio-panel", elem_classes=["panel-card"]):
-                gr.HTML('<div class="section-title">Record or Upload</div>')
-                audio_input = gr.Audio(
-                    sources=["microphone", "upload"],
-                    type="filepath",
-                    format="wav",
-                    label="음성 녹음 또는 파일 업로드",
+                start_btn = gr.Button(
+                    "Start Practice →", elem_id="btn-start", variant="primary"
                 )
-                gr.Markdown(
-                    "<div class='compact-note'>"
-                    "로컬 환경에서는 <strong>Chrome 또는 Edge</strong>를 권장합니다. &nbsp;"
-                    "마이크 사용 불가 시 브라우저 주소창 자물쇠 아이콘 → 마이크 <strong>허용</strong>."
-                    "</div>"
+
+            # ════════════════════════════════════════
+            # SCREEN 2 — Practice
+            # ════════════════════════════════════════
+            with gr.Column(
+                visible=False, elem_id="screen_practice", elem_classes=["screen-card"]
+            ) as screen_practice:
+
+                back_btn = gr.Button("← Back", elem_id="btn-back")
+                practice_header = gr.HTML("")
+
+                with gr.Column(elem_id="recording-zone"):
+                    gr.HTML(_REC_VISUAL_HTML)
+                    audio_input = gr.Audio(
+                        sources=["microphone", "upload"],
+                        type="filepath",
+                        label="녹음 또는 파일 업로드",
+                        elem_id="audio-practice",
+                        interactive=not bool(STARTUP_ERROR),
+                    )
+
+                practice_status = gr.Markdown(
+                    value="", elem_classes=["p-status"]
                 )
-                with gr.Row():
-                    score_button = gr.Button(
-                        "발음 채점하기", variant="primary", elem_id="score-btn"
+
+                with gr.Column(elem_classes=["analyze-wrap"]):
+                    analyze_btn = gr.Button(
+                        "Analyze Pronunciation",
+                        elem_id="btn-analyze",
+                        variant="primary",
+                        interactive=not bool(STARTUP_ERROR),
                     )
-                    clear_button = gr.ClearButton(
-                        components=[audio_input],
-                        value="초기화",
-                        elem_id="clear-btn",
+
+            # ════════════════════════════════════════
+            # SCREEN 3 — Result
+            # ════════════════════════════════════════
+            with gr.Column(
+                visible=False, elem_id="screen_result", elem_classes=["screen-card"]
+            ) as screen_result:
+
+                result_content = gr.HTML("")
+
+                with gr.Row(elem_classes=["result-actions"]):
+                    try_again_btn = gr.Button(
+                        "Try Again", elem_id="btn-try-again", variant="secondary"
+                    )
+                    change_word_btn = gr.Button(
+                        "Change Word", elem_id="btn-change-word", variant="primary"
                     )
 
-            # ── Status ────────────────────────────────────
-            status_output = gr.Markdown(elem_id="status-markdown")
-
-            # ── Results (hidden until scored) ─────────────
-            with gr.Column(visible=False, elem_classes=["results-shell"]) as result_section:
-                gr.HTML('<div class="section-title">Result</div>')
-                with gr.Row(equal_height=True):
-                    score_html = gr.HTML()
-                    with gr.Column():
-                        feedback_output = gr.Markdown(elem_id="feedback-markdown")
-                        details_html = gr.HTML()
-
-            # ── Footer ────────────────────────────────────
-            gr.HTML("""
-            <div class="footer-note">
-              현재 버전은 원어민 기준 벡터와의 음향적 유사도를 점수화하는 실험용 MVP입니다.<br>
-              완벽한 발음 판정기가 아니므로 참고용으로 활용해주세요.
-            </div>
-            """)
-
-            # ── Event wiring ──────────────────────────────
+            # ── Event wiring ───────────────────────────────────────────────
             target_dropdown.change(
                 fn=on_target_change,
                 inputs=[target_dropdown],
-                outputs=[target_card, status_output, result_section],
+                outputs=[welcome_word_preview],
             )
 
-            score_button.click(
-                fn=score_audio,
+            start_btn.click(
+                fn=start_practice,
+                inputs=[target_dropdown],
+                outputs=[screen_welcome, screen_practice, screen_result,
+                         practice_header, welcome_error],
+            )
+
+            back_btn.click(
+                fn=go_to_welcome,
+                outputs=[screen_welcome, screen_practice, screen_result],
+            )
+
+            analyze_btn.click(
+                fn=analyze_pronunciation,
                 inputs=[target_dropdown, audio_input],
-                outputs=[status_output, result_section, score_html, feedback_output, details_html],
+                outputs=[screen_practice, screen_result,
+                         result_content, practice_status],
+            )
+
+            try_again_btn.click(
+                fn=try_again,
+                inputs=[target_dropdown],
+                outputs=[screen_practice, screen_result,
+                         practice_header, audio_input, practice_status],
+            )
+
+            change_word_btn.click(
+                fn=change_word,
+                outputs=[screen_welcome, screen_practice, screen_result, audio_input],
             )
 
     return demo
