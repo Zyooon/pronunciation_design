@@ -6,7 +6,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-DEFAULT_WORDS_PATH = PROJECT_ROOT / "words.txt"
+DEFAULT_WORDS_PATH = PROJECT_ROOT / "data" / "words.txt"
 DEFAULT_REFERENCE_PATH = PROJECT_ROOT / "data" / "reference_vectors.json"
 
 
