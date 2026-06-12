@@ -18,7 +18,9 @@ const recStatus        = document.getElementById("rec-status");
 const btnRecord        = document.getElementById("btn-record");
 const btnRecordLabel   = document.getElementById("btn-record-label");
 const fileUpload       = document.getElementById("file-upload");
-const fileNameEl       = document.getElementById("file-name");
+const audioSourceBar   = document.getElementById("audio-source-bar");
+const sourceBadge      = document.getElementById("source-badge");
+const sourceName       = document.getElementById("source-name");
 const btnAnalyze       = document.getElementById("btn-analyze");
 const resultSection    = document.getElementById("result-section");
 const loadingOverlay   = document.getElementById("loading-overlay");
@@ -102,21 +104,39 @@ function onFileUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
 
-  const allowed = ["audio/wav", "audio/mpeg", "audio/mp4", "audio/webm",
-                   "audio/ogg", "audio/x-m4a", "audio/x-wav"];
-  if (!allowed.includes(file.type) && !file.name.match(/\.(wav|mp3|m4a|webm|ogg)$/i)) {
-    showError("지원하지 않는 파일 형식입니다. (wav, mp3, m4a, webm, ogg)");
+  if (!isValidAudioFile(file)) {
+    showError("지원하지 않는 파일 형식입니다. wav, mp3, m4a, webm, ogg 파일만 사용할 수 있습니다.");
     fileUpload.value = "";
     return;
   }
 
-  uploadedFile = file;
+  // 녹음 중이면 먼저 중지한다
+  if (isRecording()) {
+    stopRecording();
+    resetRecording();
+    setRecordingUi(false);
+  }
+
   recordedBlob = null;
-  fileNameEl.textContent = `선택된 파일: ${file.name}`;
+  uploadedFile = file;
+
+  setAudioSource("upload", file.name);
   setAudioPreview(URL.createObjectURL(file));
   updateAnalyzeButton();
   hideError();
   resetResult();
+}
+
+function isValidAudioFile(file) {
+  const allowedTypes = [
+    "audio/wav", "audio/x-wav",
+    "audio/mpeg",
+    "audio/mp4", "audio/x-m4a",
+    "audio/webm",
+    "audio/ogg",
+  ];
+  const allowedExts = /\.(wav|mp3|m4a|webm|ogg)$/i;
+  return allowedTypes.includes(file.type) || allowedExts.test(file.name);
 }
 
 // ── 녹음 토글 ─────────────────────────────────────────
@@ -130,7 +150,8 @@ async function onRecordClick() {
   hideError();
   uploadedFile = null;
   recordedBlob = null;
-  fileNameEl.textContent = "";
+  fileUpload.value = "";
+  hideAudioSource();
   audioPreview.style.display = "none";
 
   try {
@@ -150,6 +171,7 @@ async function onRecordClick() {
 function onRecordingComplete(e) {
   recordedBlob = e.detail.blob;
   setRecordingUi(false);
+  setAudioSource("record", "방금 녹음된 파일");
   setAudioPreview(URL.createObjectURL(recordedBlob));
   updateAnalyzeButton();
 }
@@ -282,7 +304,7 @@ function resetAudio() {
   recordedBlob = null;
   uploadedFile = null;
   fileUpload.value = "";
-  fileNameEl.textContent = "";
+  hideAudioSource();
   audioPreview.style.display = "none";
   audioPreview.src = "";
   recStatus.textContent = "마이크 버튼을 눌러 녹음을 시작하세요";
@@ -291,6 +313,19 @@ function resetAudio() {
   btnRecordLabel.textContent = "녹음 시작";
   recZone.classList.remove("is-recording");
   updateAnalyzeButton();
+}
+
+// ── 오디오 소스 표시 ──────────────────────────────────
+function setAudioSource(type, name) {
+  sourceBadge.textContent = type === "record" ? "🎙" : "📂";
+  sourceName.textContent  = name;
+  audioSourceBar.style.display = "flex";
+}
+
+function hideAudioSource() {
+  audioSourceBar.style.display = "none";
+  sourceBadge.textContent = "";
+  sourceName.textContent  = "";
 }
 
 // ── 오디오 미리듣기 ───────────────────────────────────

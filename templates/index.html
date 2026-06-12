@@ -70,9 +70,6 @@
         <div class="rec-status" id="rec-status">마이크 버튼을 눌러 녹음을 시작하세요</div>
       </div>
 
-      <!-- 오디오 미리듣기 -->
-      <audio id="audio-preview" class="audio-preview" controls style="display:none;"></audio>
-
       <!-- 버튼 행 -->
       <div class="btn-row">
         <button class="btn btn-record" id="btn-record" type="button">
@@ -91,8 +88,14 @@
         />
       </div>
 
-      <!-- 선택된 파일명 -->
-      <div class="file-name" id="file-name"></div>
+      <!-- 오디오 소스 표시 (초기 숨김) -->
+      <div class="audio-source-bar" id="audio-source-bar" style="display:none;">
+        <span class="source-badge" id="source-badge"></span>
+        <span class="source-name"  id="source-name"></span>
+      </div>
+
+      <!-- 오디오 미리듣기 -->
+      <audio id="audio-preview" class="audio-preview" controls style="display:none;"></audio>
 
     </section>
 
