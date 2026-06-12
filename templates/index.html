@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}PronounceAI — 발음 연습{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+
+  <!-- 헤더 -->
+  <header class="app-header">
+    <div class="header-logo">PronounceAI</div>
+    <div class="header-subtitle">Korean English Pronunciation Coach</div>
+    <div class="header-desc">한국인 학습자를 위한 AI 발음 채점 앱</div>
+  </header>
+
+  <!-- 메인 카드 -->
+  <main class="screen-card">
+
+    <!-- 단어 선택 영역 -->
+    <section class="section-word-select">
+      <div class="section-label">연습할 단어 선택</div>
+      <select id="word-select" class="word-select-dropdown">
+        <option value="">단어를 불러오는 중...</option>
+      </select>
+    </section>
+
+    <!-- 타겟 단어 카드 -->
+    <section class="target-word-card" id="target-word-card">
+      <div class="target-label">TARGET WORD</div>
+      <div class="target-word" id="target-word">—</div>
+      <div class="target-phoneme" id="target-phoneme"></div>
+      <div class="target-korean" id="target-korean"></div>
+    </section>
+
+    <!-- 녹음 영역 -->
+    <section class="record-section">
+
+      <!-- 오디오 미리듣기 -->
+      <audio id="audio-preview" class="audio-preview" controls style="display:none;"></audio>
+
+      <!-- 녹음 상태 표시 -->
+      <div class="rec-status" id="rec-status"></div>
+
+      <!-- 버튼 행 -->
+      <div class="btn-row">
+        <button class="btn btn-record" id="btn-record" type="button">
+          <span class="btn-icon">🎙</span>
+          <span id="btn-record-label">녹음 시작</span>
+        </button>
+        <label class="btn btn-upload" for="file-upload">
+          <span class="btn-icon">📂</span>
+          <span>파일 선택</span>
+        </label>
+        <input
+          id="file-upload"
+          type="file"
+          accept=".wav,.mp3,.m4a,.webm,.ogg,audio/*"
+          style="display:none;"
+        />
+      </div>
+
+      <!-- 선택된 파일명 -->
+      <div class="file-name" id="file-name"></div>
+    </section>
+
+    <!-- 분석 버튼 -->
+    <section class="analyze-section">
+      <button class="btn btn-analyze" id="btn-analyze" type="button" disabled>
+        발음 분석하기
+      </button>
+    </section>
+
+    <!-- 결과 영역 (초기 숨김) -->
+    <section class="result-section" id="result-section" style="display:none;">
+      <div class="result-word-row">
+        <span class="result-word" id="result-word"></span>
+        <span class="result-phoneme-pill" id="result-phoneme-pill"></span>
+      </div>
+      <div class="score-card">
+        <div class="score-label">Pronunciation Score</div>
+        <div class="score-number-row">
+          <span class="score-number" id="score-number">0</span>
+          <span class="score-max"> / 100</span>
+        </div>
+        <div class="score-grade" id="score-grade"></div>
+        <div class="score-grade-sub" id="score-grade-sub"></div>
+      </div>
+      <div class="feedback-card">
+        <div class="feedback-label">FEEDBACK</div>
+        <div class="feedback-body" id="feedback-body"></div>
+      </div>
+      <div class="metrics-card" id="metrics-card"></div>
+      <button class="btn btn-retry" id="btn-retry" type="button">다시 녹음하기</button>
+    </section>
+
+    <!-- 로딩 오버레이 -->
+    <div class="loading-overlay" id="loading-overlay" style="display:none;">
+      <div class="spinner-ring"></div>
+      <div class="loading-text">발음을 분석하고 있습니다...</div>
+    </div>
+
+    <!-- 에러 메시지 영역 -->
+    <div class="error-message" id="error-message" style="display:none;"></div>
+
+  </main>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/api.js') }}"></script>
+<script src="{{ url_for('static', path='js/recorder.js') }}"></script>
+<script src="{{ url_for('static', path='js/app.js') }}"></script>
+{% endblock %}
