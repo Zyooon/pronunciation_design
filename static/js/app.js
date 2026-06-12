@@ -94,6 +94,7 @@ function bindEvents() {
   btnRecord.addEventListener("click", onRecordClick);
   btnAnalyze.addEventListener("click", onAnalyzeClick);
   btnRetry.addEventListener("click", onRetryClick);
+  document.addEventListener("recordingcomplete", onRecordingComplete);
 }
 
 // ── 파일 업로드 ───────────────────────────────────────
@@ -118,10 +119,54 @@ function onFileUpload(e) {
   resetResult();
 }
 
-// ── 녹음 버튼 (placeholder — recorder.js에서 구현) ───
-function onRecordClick() {
-  if (typeof toggleRecording === "function") {
-    toggleRecording();
+// ── 녹음 토글 ─────────────────────────────────────────
+async function onRecordClick() {
+  if (isRecording()) {
+    stopRecording();
+    // UI는 recordingcomplete 이벤트에서 갱신한다
+    return;
+  }
+
+  hideError();
+  uploadedFile = null;
+  recordedBlob = null;
+  fileNameEl.textContent = "";
+  audioPreview.style.display = "none";
+
+  try {
+    await startRecording();
+    setRecordingUi(true);
+    resetResult();
+  } catch (err) {
+    const isDenied = err.name === "NotAllowedError" || err.name === "PermissionDeniedError";
+    showError(
+      isDenied
+        ? "마이크 권한이 거부됐습니다. 브라우저 설정에서 마이크를 허용해주세요."
+        : `녹음을 시작할 수 없습니다: ${err.message}`
+    );
+  }
+}
+
+function onRecordingComplete(e) {
+  recordedBlob = e.detail.blob;
+  setRecordingUi(false);
+  setAudioPreview(URL.createObjectURL(recordedBlob));
+  updateAnalyzeButton();
+}
+
+function setRecordingUi(active) {
+  if (active) {
+    btnRecord.classList.add("is-recording");
+    btnRecordLabel.textContent = "녹음 중지";
+    recStatus.textContent = "● 녹음 중...";
+    recStatus.classList.add("is-recording");
+    recZone.classList.add("is-recording");
+  } else {
+    btnRecord.classList.remove("is-recording");
+    btnRecordLabel.textContent = "녹음 시작";
+    recStatus.textContent = "녹음 완료 — 아래에서 미리 들어보세요";
+    recStatus.classList.remove("is-recording");
+    recZone.classList.remove("is-recording");
   }
 }
 
@@ -233,6 +278,7 @@ function resetResult() {
 }
 
 function resetAudio() {
+  resetRecording();
   recordedBlob = null;
   uploadedFile = null;
   fileUpload.value = "";
@@ -243,7 +289,7 @@ function resetAudio() {
   recStatus.className = "rec-status";
   btnRecord.className = "btn btn-record";
   btnRecordLabel.textContent = "녹음 시작";
-  if (recZone) recZone.classList.remove("is-recording");
+  recZone.classList.remove("is-recording");
   updateAnalyzeButton();
 }
 
