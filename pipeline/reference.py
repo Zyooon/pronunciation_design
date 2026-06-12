@@ -1,13 +1,14 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_WORDS_PATH = PROJECT_ROOT / "data" / "words.txt"
 DEFAULT_REFERENCE_PATH = PROJECT_ROOT / "data" / "reference_vectors.json"
+
+ReferenceVector = dict[str, float | list[float]]
 
 
 @dataclass(frozen=True)
@@ -36,7 +37,9 @@ class TargetWord:
         return f"{self.word} /{self.phoneme}/"
 
 
-def load_reference_vectors(reference_path: str | Path = DEFAULT_REFERENCE_PATH) -> dict[str, dict]:
+def load_reference_vectors(
+    reference_path: str | Path = DEFAULT_REFERENCE_PATH,
+) -> dict[str, ReferenceVector]:
     """
     data/reference_vectors.json을 로드합니다.
 
@@ -52,8 +55,8 @@ def load_reference_vectors(reference_path: str | Path = DEFAULT_REFERENCE_PATH) 
     if not reference_path.exists():
         raise FileNotFoundError(f"Reference vector file not found: {reference_path}")
 
-    with reference_path.open("r", encoding="utf-8") as f:
-        reference_vectors = json.load(f)
+    with reference_path.open("r", encoding="utf-8") as reference_file:
+        reference_vectors = json.load(reference_file)
 
     if not reference_vectors:
         raise ValueError(
@@ -62,6 +65,23 @@ def load_reference_vectors(reference_path: str | Path = DEFAULT_REFERENCE_PATH) 
         )
 
     return reference_vectors
+
+
+def _parse_target_word_line(line: str, line_number: int) -> TargetWord:
+    line_parts = [part.strip() for part in line.split(",")]
+
+    if len(line_parts) != 3:
+        raise ValueError(
+            f"Invalid words.txt format at line {line_number}: {line}\n"
+            "Expected: word,korean_pronunciation,phoneme"
+        )
+
+    word, korean_pronunciation, phoneme = line_parts
+    return TargetWord(
+        word=word,
+        korean_pronunciation=korean_pronunciation,
+        phoneme=phoneme,
+    )
 
 
 def load_target_words(words_path: str | Path = DEFAULT_WORDS_PATH) -> list[TargetWord]:
@@ -80,30 +100,14 @@ def load_target_words(words_path: str | Path = DEFAULT_WORDS_PATH) -> list[Targe
 
     targets: list[TargetWord] = []
 
-    with words_path.open("r", encoding="utf-8") as f:
-        for line_number, line in enumerate(f, start=1):
+    with words_path.open("r", encoding="utf-8") as words_file:
+        for line_number, line in enumerate(words_file, start=1):
             line = line.strip()
 
             if not line or line.startswith("#"):
                 continue
 
-            parts = [part.strip() for part in line.split(",")]
-
-            if len(parts) != 3:
-                raise ValueError(
-                    f"Invalid words.txt format at line {line_number}: {line}\n"
-                    "Expected: word,korean_pronunciation,phoneme"
-                )
-
-            word, korean_pronunciation, phoneme = parts
-
-            targets.append(
-                TargetWord(
-                    word=word,
-                    korean_pronunciation=korean_pronunciation,
-                    phoneme=phoneme,
-                )
-            )
+            targets.append(_parse_target_word_line(line, line_number))
 
     return targets
 
@@ -151,11 +155,9 @@ def get_available_targets(
 
 def get_reference_for_target(
     target: TargetWord,
-    reference_vectors: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    """
-    특정 타겟 단어의 음소에 해당하는 reference vector를 가져옵니다.
-    """
+    reference_vectors: dict[str, ReferenceVector],
+) -> ReferenceVector:
+    """특정 타겟 단어의 음소에 해당하는 reference vector를 가져옵니다."""
     if target.phoneme not in reference_vectors:
         raise KeyError(f"No reference vector found for phoneme: {target.phoneme}")
 
@@ -165,18 +167,16 @@ def get_reference_for_target(
 def get_reference_for_target_id(
     target_id: str,
     target_index: dict[str, TargetWord],
-    reference_vectors: dict[str, dict[str, Any]],
-) -> tuple[TargetWord, dict[str, Any]]:
-    """
-    app.py에서 선택된 target_id를 받아 TargetWord와 reference vector를 함께 반환합니다.
-    """
+    reference_vectors: dict[str, ReferenceVector],
+) -> tuple[TargetWord, ReferenceVector]:
+    """target_id로 TargetWord와 reference vector를 함께 반환합니다."""
     if target_id not in target_index:
         raise KeyError(f"Unknown target_id: {target_id}")
 
     target = target_index[target_id]
-    reference = get_reference_for_target(target, reference_vectors)
+    reference_vector = get_reference_for_target(target, reference_vectors)
 
-    return target, reference
+    return target, reference_vector
 
 
 def get_gradio_choices(target_words: list[TargetWord]) -> list[tuple[str, str]]:

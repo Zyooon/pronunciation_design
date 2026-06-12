@@ -1,9 +1,18 @@
-from typing import Any
+from typing import TypedDict
 
 import numpy as np
 
 
 EPSILON = 1e-8
+
+AudioFeatures = dict[str, float | list[float]]
+ReferenceVector = dict[str, float | list[float] | str]
+
+
+class ScoreResult(TypedDict):
+    score: float
+    feedback: str
+    details: dict[str, float]
 
 
 def sigmoid_score(diff_ratio: float, steepness: float = 5.0, tolerance: float = 0.3) -> float:
@@ -51,10 +60,8 @@ def z_score_distance_score(
     ref_mean = np.array(ref_mean, dtype=float)
     ref_std = np.array(ref_std, dtype=float)
 
-    z = (user_values - ref_mean) / (ref_std + EPSILON)
-
-    # 평균 절대 z-score가 클수록 기준 발음에서 멀다는 뜻입니다.
-    distance = np.mean(np.abs(z))
+    z_scores = (user_values - ref_mean) / (ref_std + EPSILON)
+    distance = np.mean(np.abs(z_scores))
 
     score = 100 - np.clip(distance * scale, 0, 100)
     return float(np.clip(score, 0, 100))
@@ -75,7 +82,7 @@ def ratio_feature_score(user_value: float, ref_value: float) -> float:
     return sigmoid_score(diff_ratio)
 
 
-def score_vowel(user_features: dict[str, Any], reference: dict[str, Any]) -> dict[str, float]:
+def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     """
     모음 음소를 채점합니다.
 
@@ -119,7 +126,7 @@ def score_vowel(user_features: dict[str, Any], reference: dict[str, Any]) -> dic
     }
 
 
-def score_consonant(user_features: dict[str, Any], reference: dict[str, Any]) -> dict[str, float]:
+def score_consonant(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     """
     자음 음소를 채점합니다.
 
@@ -198,17 +205,38 @@ def get_feedback(score: float, phoneme: str, phoneme_type: str) -> str:
     return f"/{phoneme}/ 자음의 조음 위치를 다시 확인해보세요."
 
 
+def _build_phoneme_score_details(
+    user_features: AudioFeatures,
+    reference: ReferenceVector,
+    phoneme_type: str,
+) -> dict[str, float]:
+    if phoneme_type == "vowel":
+        return score_vowel(user_features, reference)
+    if phoneme_type == "consonant":
+        return score_consonant(user_features, reference)
+    # 모음/자음 타입을 알 수 없으면 MFCC만으로 최소 채점합니다.
+    mfcc_score = z_score_distance_score(
+        user_values=user_features["mfcc_mean"],
+        ref_mean=reference["mfcc_mean"],
+        ref_std=reference["mfcc_std"],
+    )
+    return {
+        "score": round(float(mfcc_score), 1),
+        "mfcc_score": round(float(mfcc_score), 1),
+    }
+
+
 def score_pronunciation(
-    user_features: dict[str, Any],
-    reference: dict[str, Any],
+    user_features: AudioFeatures,
+    reference: ReferenceVector,
     phoneme: str,
-) -> dict[str, Any]:
+) -> ScoreResult:
     """
     사용자 음성 특징과 reference vector를 비교해 최종 채점 결과를 반환합니다.
 
     Args:
-        user_features: extract_features() 결과
-        reference: reference_vectors.json에서 가져온 특정 음소 기준 벡터
+        user_features: 음성에서 추출한 특징 벡터
+        reference: 타겟 음소의 기준 벡터
         phoneme: 타겟 음소
 
     Returns:
@@ -218,24 +246,8 @@ def score_pronunciation(
             "details": {...}
         }
     """
-    phoneme_type = reference.get("phoneme_type", "unknown")
-
-    if phoneme_type == "vowel":
-        details = score_vowel(user_features, reference)
-    elif phoneme_type == "consonant":
-        details = score_consonant(user_features, reference)
-    else:
-        # 모음/자음 타입을 알 수 없으면 MFCC만으로 최소 채점합니다.
-        mfcc_score = z_score_distance_score(
-            user_values=user_features["mfcc_mean"],
-            ref_mean=reference["mfcc_mean"],
-            ref_std=reference["mfcc_std"],
-        )
-        details = {
-            "score": round(float(mfcc_score), 1),
-            "mfcc_score": round(float(mfcc_score), 1),
-        }
-
+    phoneme_type = str(reference.get("phoneme_type", "unknown"))
+    details = _build_phoneme_score_details(user_features, reference, phoneme_type)
     final_score = float(details["score"])
     feedback = get_feedback(final_score, phoneme, phoneme_type)
 
