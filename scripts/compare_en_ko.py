@@ -4,6 +4,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 
@@ -53,11 +54,23 @@ def relative_path(path: Path) -> str:
         return str(path)
 
 
-def safe_ratio(a: float, b: float) -> float:
+def safe_relative_diff(base_value: float, target_value: float) -> float:
     """
-    두 값의 상대 차이 비율을 계산합니다.
+    base_value 기준 상대 차이율을 계산합니다.
+
+    예: base=320, target=800이면 1.5입니다.
     """
-    return round(abs(a - b) / (abs(a) + EPSILON), 6)
+    return round(abs(base_value - target_value) / (abs(base_value) + EPSILON), 6)
+
+
+def safe_ko_en_ratio(ko_value: float, en_value: float) -> float | None:
+    """
+    한국어식 값 / 영어식 값의 실제 비율을 계산합니다.
+    """
+    if abs(en_value) < EPSILON:
+        return None
+
+    return round(ko_value / en_value, 6)
 
 
 def cosine_distance(a: list[float], b: list[float]) -> float:
@@ -112,6 +125,16 @@ def compare_feature_pair(
     en_centroid = float(en_features["spectral_centroid_mean"])
     ko_centroid = float(ko_features["spectral_centroid_mean"])
 
+    duration_signed_diff = ko_duration - en_duration
+    zcr_signed_diff = ko_zcr - en_zcr
+    rms_signed_diff = ko_rms - en_rms
+    spectral_centroid_signed_diff = ko_centroid - en_centroid
+
+    duration_relative_diff = safe_relative_diff(en_duration, ko_duration)
+    zcr_relative_diff = safe_relative_diff(en_zcr, ko_zcr)
+    rms_relative_diff = safe_relative_diff(en_rms, ko_rms)
+    spectral_centroid_relative_diff = safe_relative_diff(en_centroid, ko_centroid)
+
     return {
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "word": word,
@@ -121,20 +144,32 @@ def compare_feature_pair(
         "ko_audio_path": relative_path(ko_audio_path),
         "en_duration_ms": round(en_duration, 3),
         "ko_duration_ms": round(ko_duration, 3),
-        "duration_diff_ms": round(abs(en_duration - ko_duration), 3),
-        "duration_ratio": safe_ratio(en_duration, ko_duration),
+        "duration_diff_ms": round(abs(duration_signed_diff), 3),
+        "duration_ratio": duration_relative_diff,
+        "duration_signed_diff_ms": round(duration_signed_diff, 3),
+        "duration_relative_diff": duration_relative_diff,
+        "duration_ko_en_ratio": safe_ko_en_ratio(ko_duration, en_duration),
         "en_zcr_mean": round(en_zcr, 6),
         "ko_zcr_mean": round(ko_zcr, 6),
-        "zcr_diff": round(abs(en_zcr - ko_zcr), 6),
-        "zcr_ratio": safe_ratio(en_zcr, ko_zcr),
+        "zcr_diff": round(abs(zcr_signed_diff), 6),
+        "zcr_ratio": zcr_relative_diff,
+        "zcr_signed_diff": round(zcr_signed_diff, 6),
+        "zcr_relative_diff": zcr_relative_diff,
+        "zcr_ko_en_ratio": safe_ko_en_ratio(ko_zcr, en_zcr),
         "en_rms_mean": round(en_rms, 6),
         "ko_rms_mean": round(ko_rms, 6),
-        "rms_diff": round(abs(en_rms - ko_rms), 6),
-        "rms_ratio": safe_ratio(en_rms, ko_rms),
+        "rms_diff": round(abs(rms_signed_diff), 6),
+        "rms_ratio": rms_relative_diff,
+        "rms_signed_diff": round(rms_signed_diff, 6),
+        "rms_relative_diff": rms_relative_diff,
+        "rms_ko_en_ratio": safe_ko_en_ratio(ko_rms, en_rms),
         "en_spectral_centroid_mean": round(en_centroid, 6),
         "ko_spectral_centroid_mean": round(ko_centroid, 6),
-        "spectral_centroid_diff": round(abs(en_centroid - ko_centroid), 6),
-        "spectral_centroid_ratio": safe_ratio(en_centroid, ko_centroid),
+        "spectral_centroid_diff": round(abs(spectral_centroid_signed_diff), 6),
+        "spectral_centroid_ratio": spectral_centroid_relative_diff,
+        "spectral_centroid_signed_diff": round(spectral_centroid_signed_diff, 6),
+        "spectral_centroid_relative_diff": spectral_centroid_relative_diff,
+        "spectral_centroid_ko_en_ratio": safe_ko_en_ratio(ko_centroid, en_centroid),
         "mfcc_distance": euclidean_distance(en_features["mfcc_mean"], ko_features["mfcc_mean"]),
         "mfcc_cosine_distance": cosine_distance(en_features["mfcc_mean"], ko_features["mfcc_mean"]),
         "en_mfcc_mean_json": en_features["mfcc_mean"],
@@ -148,7 +183,7 @@ def write_json_results(
     results: list[dict[str, Any]],
 ) -> None:
     """
-    이번 실행에서 성공한 비교 결과를 JSON 파일로 저장합니다.
+    이번 실행의 비교 결과를 JSON 파일로 저장합니다.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -159,6 +194,37 @@ def write_json_results(
 
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def make_error_result(
+    run_id: str,
+    word: str,
+    korean_pronunciation: str,
+    phoneme: str,
+    error_message: str,
+    en_match_key: str,
+    ko_match_key: str,
+    ko_match_strategy: str,
+    en_audio_exists: bool,
+    ko_audio_exists: bool,
+) -> dict[str, Any]:
+    """
+    JSON 분석 화면에서 누락/실패 항목도 확인할 수 있도록 error row를 생성합니다.
+    """
+    return {
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "run_id": run_id,
+        "status": "error",
+        "error_message": error_message,
+        "word": word,
+        "korean_pronunciation": korean_pronunciation,
+        "phoneme": phoneme,
+        "en_match_key": en_match_key,
+        "ko_match_key": ko_match_key,
+        "ko_match_strategy": ko_match_strategy,
+        "en_audio_exists": en_audio_exists,
+        "ko_audio_exists": ko_audio_exists,
+    }
 
 
 def compare_all_words(
@@ -177,28 +243,70 @@ def compare_all_words(
 
     saved_count = 0
     skipped_count = 0
+    processed_count = 0
     results: list[dict[str, Any]] = []
     started_at = datetime.now().isoformat(timespec="seconds")
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
 
     for target in target_words:
-        if limit is not None and saved_count >= limit:
+        if limit is not None and processed_count >= limit:
             break
 
-        en_audio_files = find_audio_files(en_audio_dir, target.word)
+        processed_count += 1
+        en_match_key = target.word
+        ko_match_key = target.word
+        ko_match_strategy = "word"
+
+        en_audio_files = find_audio_files(en_audio_dir, en_match_key)
 
         # 한국어식 gTTS 파일명이 영어 단어 기준이면 target.word로 찾고,
         # 한글 발음 기준이면 target.korean_pronunciation으로도 한 번 더 찾습니다.
-        ko_audio_files = find_audio_files(ko_audio_dir, target.word)
+        ko_audio_files = find_audio_files(ko_audio_dir, ko_match_key)
         if not ko_audio_files:
-            ko_audio_files = find_audio_files(ko_audio_dir, target.korean_pronunciation)
+            ko_match_key = target.korean_pronunciation
+            ko_match_strategy = "korean_pronunciation"
+            ko_audio_files = find_audio_files(ko_audio_dir, ko_match_key)
 
-        if not en_audio_files:
+        en_audio_exists = bool(en_audio_files)
+        ko_audio_exists = bool(ko_audio_files)
+
+        if not en_audio_exists:
             skipped_count += 1
+            error_message = "English audio file not found."
+            results.append(
+                make_error_result(
+                    run_id=run_id,
+                    word=target.word,
+                    korean_pronunciation=target.korean_pronunciation,
+                    phoneme=target.phoneme,
+                    error_message=error_message,
+                    en_match_key=en_match_key,
+                    ko_match_key=ko_match_key,
+                    ko_match_strategy=ko_match_strategy,
+                    en_audio_exists=en_audio_exists,
+                    ko_audio_exists=ko_audio_exists,
+                )
+            )
             print(f"[SKIP] English audio not found: {target.word}")
             continue
 
-        if not ko_audio_files:
+        if not ko_audio_exists:
             skipped_count += 1
+            error_message = "Korean-style audio file not found."
+            results.append(
+                make_error_result(
+                    run_id=run_id,
+                    word=target.word,
+                    korean_pronunciation=target.korean_pronunciation,
+                    phoneme=target.phoneme,
+                    error_message=error_message,
+                    en_match_key=en_match_key,
+                    ko_match_key=ko_match_key,
+                    ko_match_strategy=ko_match_strategy,
+                    en_audio_exists=en_audio_exists,
+                    ko_audio_exists=ko_audio_exists,
+                )
+            )
             print(f"[SKIP] Korean-style audio not found: {target.word}")
             continue
 
@@ -215,6 +323,14 @@ def compare_all_words(
             )
             row_id = insert_comparison_result(result, db_path=db_path)
             result["db_row_id"] = row_id
+            result["run_id"] = run_id
+            result["status"] = "ok"
+            result["error_message"] = None
+            result["en_match_key"] = en_match_key
+            result["ko_match_key"] = ko_match_key
+            result["ko_match_strategy"] = ko_match_strategy
+            result["en_audio_exists"] = en_audio_path.exists()
+            result["ko_audio_exists"] = ko_audio_path.exists()
             results.append(result)
             saved_count += 1
 
@@ -225,10 +341,26 @@ def compare_all_words(
 
         except Exception as e:
             skipped_count += 1
+            results.append(
+                make_error_result(
+                    run_id=run_id,
+                    word=target.word,
+                    korean_pronunciation=target.korean_pronunciation,
+                    phoneme=target.phoneme,
+                    error_message=f"{type(e).__name__}: {e}",
+                    en_match_key=en_match_key,
+                    ko_match_key=ko_match_key,
+                    ko_match_strategy=ko_match_strategy,
+                    en_audio_exists=en_audio_path.exists(),
+                    ko_audio_exists=ko_audio_path.exists(),
+                )
+            )
             print(f"[SKIP] Failed to compare {target.word}: {type(e).__name__}: {e}")
 
     finished_at = datetime.now().isoformat(timespec="seconds")
     metadata = {
+        "run_id": run_id,
+        "script_version": "compare_en_ko_v2",
         "started_at": started_at,
         "finished_at": finished_at,
         "words_path": relative_path(words_path),
@@ -237,12 +369,15 @@ def compare_all_words(
         "db_path": relative_path(db_path),
         "json_output_path": relative_path(json_output_path),
         "limit": limit,
+        "processed_count": processed_count,
         "saved_count": saved_count,
         "skipped_count": skipped_count,
     }
     write_json_results(json_output_path, metadata, results)
 
     print()
+    print(f"Run ID: {run_id}")
+    print(f"Processed rows: {processed_count}")
     print(f"Saved rows: {saved_count}")
     print(f"Skipped rows: {skipped_count}")
     print(f"Database: {db_path}")
