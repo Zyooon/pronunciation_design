@@ -69,7 +69,7 @@ def analyze_audio(word: str, phoneme: str, audio_path: Path) -> AnalysisResultDt
 
     if phoneme not in reference_vectors:
         raise KeyError(
-            f"'{phoneme}' 음소의 레퍼런스 데이터가 없습니다. "
+            f"'{phoneme}' 발음의 레퍼런스 데이터가 없습니다. "
             "scripts/build_reference.py를 먼저 실행해주세요."
         )
 

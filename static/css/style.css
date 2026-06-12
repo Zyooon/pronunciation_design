@@ -125,27 +125,49 @@ body {
   padding-bottom: 0;
 }
 
-.word-select-dropdown {
-  width: 100%;
-  padding: 13px 40px 13px 16px;
+/* 2열 선택 컨테이너 — 발음기호 3 : 단어 7 */
+.word-select-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* 공통 셀렉트 베이스 */
+.phoneme-select,
+.word-select {
+  padding: 13px 28px 13px 12px;
   border: 1.5px solid #bfdbfe;
   border-radius: 14px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
   color: #1e293b;
-  background: #f8faff;
+  background-color: #f8faff;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 14px center;
+  background-position: right 10px center;
   cursor: pointer;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
+  min-width: 0;
 }
 
-.word-select-dropdown:focus {
+.phoneme-select:focus,
+.word-select:focus {
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+/* 비율: 발음기호 3, 단어 7 */
+.phoneme-select { flex: 3; text-align: center; }
+.word-select    { flex: 7; }
+
+/* 비활성 (음소 미선택 시) */
+.word-select:disabled {
+  color: #94a3b8;
+  background-color: #f1f5f9;
+  border-color: #e2e8f0;
+  cursor: not-allowed;
+  opacity: 1;
 }
 
 /* ── 타겟 단어 카드 ────────────────────────────────────── */

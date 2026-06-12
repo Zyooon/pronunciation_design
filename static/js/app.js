@@ -6,8 +6,10 @@
 let selectedWord = null;   // { word, korean_pronunciation, phoneme }
 let recordedBlob = null;   // Blob | null
 let uploadedFile = null;   // File | null
+let allWords     = [];     // 전체 단어 목록 (발음 필터링용)
 
 // ── DOM 참조 ──────────────────────────────────────────
+const phonemeSelect    = document.getElementById("phoneme-select");
 const wordSelect       = document.getElementById("word-select");
 const targetWordEl     = document.getElementById("target-word");
 const targetPhonemeEl  = document.getElementById("target-phoneme");
@@ -51,29 +53,61 @@ async function loadWordList() {
   try {
     const words = await fetchWords();
     if (!words.length) {
-      wordSelect.innerHTML = '<option value="">단어 목록이 비어 있습니다</option>';
+      phonemeSelect.innerHTML = '<option value="">발음 없음</option>';
       showError("data/words.txt에 단어가 없습니다. 파일을 확인해주세요.");
       return;
     }
-    renderWordOptions(words);
+    allWords = words;
+    renderPhonemeOptions(words);
   } catch (err) {
-    wordSelect.innerHTML = '<option value="">불러오기 실패</option>';
+    phonemeSelect.innerHTML = '<option value="">불러오기 실패</option>';
     showError(err.message || "단어 목록을 불러오지 못했습니다. 서버를 확인해주세요.");
   }
 }
 
-function renderWordOptions(words) {
-  wordSelect.innerHTML = '<option value="">— 단어를 선택하세요 —</option>';
+/** 전체 단어에서 발음을 추출해 왼쪽 셀렉트를 채운다. */
+function renderPhonemeOptions(words) {
+  const phonemes = [...new Set(words.map((w) => w.phoneme))];
 
-  words.forEach((w, idx) => {
-    const option = document.createElement("option");
-    option.value = idx;
-    option.textContent = `${w.word}  /${w.phoneme}/`;
-    option.dataset.word   = w.word;
-    option.dataset.korean = w.korean_pronunciation;
-    option.dataset.phoneme = w.phoneme;
-    wordSelect.appendChild(option);
+  phonemeSelect.innerHTML = '<option value="">— 발음 선택 —</option>';
+  phonemes.forEach((p) => {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = `/${p}/`;
+    phonemeSelect.appendChild(opt);
   });
+
+  // 오른쪽은 발음 선택 전까지 비활성
+  wordSelect.innerHTML = '<option value="">← 발음을 먼저 선택하세요</option>';
+  wordSelect.disabled = true;
+}
+
+/** 발음 선택 시 오른쪽 단어 셀렉트를 해당 발음 단어로 채운다. */
+function onPhonemeSelect() {
+  const phoneme = phonemeSelect.value;
+
+  selectedWord = null;
+  updateTargetCard(null);
+  resetResult();
+
+  if (!phoneme) {
+    wordSelect.innerHTML = '<option value="">← 발음을 먼저 선택하세요</option>';
+    wordSelect.disabled = true;
+    return;
+  }
+
+  const filtered = allWords.filter((w) => w.phoneme === phoneme);
+
+  wordSelect.innerHTML = '<option value="">— 단어 선택 —</option>';
+  filtered.forEach((w) => {
+    const opt = document.createElement("option");
+    opt.value       = w.word;
+    opt.textContent = w.word;
+    opt.dataset.word   = w.word;
+    opt.dataset.korean = w.korean_pronunciation;
+    wordSelect.appendChild(opt);
+  });
+  wordSelect.disabled = false;
 }
 
 // ── 단어 선택 이벤트 ──────────────────────────────────
@@ -88,7 +122,7 @@ function onWordSelect() {
   selectedWord = {
     word: opt.dataset.word,
     korean_pronunciation: opt.dataset.korean,
-    phoneme: opt.dataset.phoneme,
+    phoneme: phonemeSelect.value,   // 발음은 왼쪽 셀렉트에서 가져온다
   };
   updateTargetCard(selectedWord);
   resetResult();
@@ -108,6 +142,7 @@ function updateTargetCard(word) {
 
 // ── 이벤트 바인딩 ─────────────────────────────────────
 function bindEvents() {
+  phonemeSelect.addEventListener("change", onPhonemeSelect);
   wordSelect.addEventListener("change", onWordSelect);
   fileUpload.addEventListener("change", onFileUpload);
   btnRecord.addEventListener("click", onRecordClick);
@@ -253,7 +288,7 @@ async function onAnalyzeClick() {
 
 function getAudioFilename(blob) {
   if (blob instanceof File) return blob.name;
-  return "recording.webm";
+  return "recording.wav";
 }
 
 // ── 재시도 ────────────────────────────────────────────

@@ -36,9 +36,14 @@
     <!-- 단어 선택 -->
     <section class="section section-select">
       <div class="section-label">연습할 단어 선택</div>
-      <select id="word-select" class="word-select-dropdown">
-        <option value="">단어를 불러오는 중...</option>
-      </select>
+      <div class="word-select-row">
+        <select id="phoneme-select" class="phoneme-select">
+          <option value="">발음 선택</option>
+        </select>
+        <select id="word-select" class="word-select" disabled>
+          <option value="">← 발음을 먼저 선택하세요</option>
+        </select>
+      </div>
     </section>
 
     <!-- 타겟 단어 카드 -->

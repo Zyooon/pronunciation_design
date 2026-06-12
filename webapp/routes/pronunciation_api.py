@@ -58,8 +58,8 @@ async def analyze_pronunciation(
         log.warning("reference 없음: word=%s, phoneme=%s, error=%s", word, phoneme, e)
         return _error_response(
             422,
-            f"'{phoneme}' 음소의 레퍼런스 데이터가 없습니다. "
-            "지원하는 음소인지 확인해주세요.",
+            f"'{phoneme}' 발음의 레퍼런스 데이터가 없습니다. "
+            "지원하는 발음인지 확인해주세요.",
         )
     except ValueError as e:
         log.warning("오디오 오류: word=%s, phoneme=%s, error=%s", word, phoneme, e)
