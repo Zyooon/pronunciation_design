@@ -13,6 +13,7 @@ const targetWordEl     = document.getElementById("target-word");
 const targetPhonemeEl  = document.getElementById("target-phoneme");
 const targetKoreanEl   = document.getElementById("target-korean");
 const audioPreview     = document.getElementById("audio-preview");
+const recZone          = document.getElementById("record-zone");
 const recStatus        = document.getElementById("rec-status");
 const btnRecord        = document.getElementById("btn-record");
 const btnRecordLabel   = document.getElementById("btn-record-label");
@@ -238,10 +239,11 @@ function resetAudio() {
   fileNameEl.textContent = "";
   audioPreview.style.display = "none";
   audioPreview.src = "";
-  recStatus.textContent = "";
+  recStatus.textContent = "마이크 버튼을 눌러 녹음을 시작하세요";
   recStatus.className = "rec-status";
   btnRecord.className = "btn btn-record";
   btnRecordLabel.textContent = "녹음 시작";
+  if (recZone) recZone.classList.remove("is-recording");
   updateAnalyzeButton();
 }
 

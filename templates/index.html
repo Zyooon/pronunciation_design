@@ -10,13 +10,31 @@
     <div class="header-logo">PronounceAI</div>
     <div class="header-subtitle">Korean English Pronunciation Coach</div>
     <div class="header-desc">한국인 학습자를 위한 AI 발음 채점 앱</div>
+
+    <div class="steps-row">
+      <div class="step-item">
+        <div class="step-num">1</div>
+        <div class="step-title">단어 선택</div>
+        <div class="step-desc">연습할 단어를 고르세요</div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">2</div>
+        <div class="step-title">녹음</div>
+        <div class="step-desc">발음하고 녹음하세요</div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">3</div>
+        <div class="step-title">분석</div>
+        <div class="step-desc">AI 채점과 피드백</div>
+      </div>
+    </div>
   </header>
 
   <!-- 메인 카드 -->
   <main class="screen-card">
 
-    <!-- 단어 선택 영역 -->
-    <section class="section-word-select">
+    <!-- 단어 선택 -->
+    <section class="section section-select">
       <div class="section-label">연습할 단어 선택</div>
       <select id="word-select" class="word-select-dropdown">
         <option value="">단어를 불러오는 중...</option>
@@ -24,26 +42,41 @@
     </section>
 
     <!-- 타겟 단어 카드 -->
-    <section class="target-word-card" id="target-word-card">
+    <section class="target-card" id="target-word-card">
       <div class="target-label">TARGET WORD</div>
-      <div class="target-word" id="target-word">—</div>
+      <div class="target-word"  id="target-word">—</div>
       <div class="target-phoneme" id="target-phoneme"></div>
-      <div class="target-korean" id="target-korean"></div>
+      <div class="target-korean"  id="target-korean"></div>
     </section>
 
-    <!-- 녹음 영역 -->
-    <section class="record-section">
+    <!-- 녹음·업로드 영역 (다크 배경) -->
+    <section class="record-zone" id="record-zone">
+
+      <!-- 녹음 시각 효과 -->
+      <div class="rec-visual" id="rec-visual">
+        <div class="rec-circles">
+          <div class="rec-ring1"></div>
+          <div class="rec-ring2"></div>
+          <div class="rec-core">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none"
+                 stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8"  y1="23" x2="16" y2="23"/>
+            </svg>
+          </div>
+        </div>
+        <div class="rec-status" id="rec-status">마이크 버튼을 눌러 녹음을 시작하세요</div>
+      </div>
 
       <!-- 오디오 미리듣기 -->
       <audio id="audio-preview" class="audio-preview" controls style="display:none;"></audio>
 
-      <!-- 녹음 상태 표시 -->
-      <div class="rec-status" id="rec-status"></div>
-
       <!-- 버튼 행 -->
       <div class="btn-row">
         <button class="btn btn-record" id="btn-record" type="button">
-          <span class="btn-icon">🎙</span>
+          <span class="btn-icon" id="btn-record-icon">🎙</span>
           <span id="btn-record-label">녹음 시작</span>
         </button>
         <label class="btn btn-upload" for="file-upload">
@@ -60,36 +93,46 @@
 
       <!-- 선택된 파일명 -->
       <div class="file-name" id="file-name"></div>
+
     </section>
 
     <!-- 분석 버튼 -->
-    <section class="analyze-section">
+    <section class="section section-analyze">
       <button class="btn btn-analyze" id="btn-analyze" type="button" disabled>
         발음 분석하기
       </button>
     </section>
 
+    <!-- 에러 메시지 -->
+    <div class="error-message" id="error-message" style="display:none;"></div>
+
     <!-- 결과 영역 (초기 숨김) -->
     <section class="result-section" id="result-section" style="display:none;">
       <div class="result-word-row">
-        <span class="result-word" id="result-word"></span>
+        <span class="result-word"         id="result-word"></span>
         <span class="result-phoneme-pill" id="result-phoneme-pill"></span>
       </div>
+
       <div class="score-card">
         <div class="score-label">Pronunciation Score</div>
         <div class="score-number-row">
           <span class="score-number" id="score-number">0</span>
           <span class="score-max"> / 100</span>
         </div>
-        <div class="score-grade" id="score-grade"></div>
+        <div class="score-grade"     id="score-grade"></div>
         <div class="score-grade-sub" id="score-grade-sub"></div>
       </div>
+
       <div class="feedback-card">
         <div class="feedback-label">FEEDBACK</div>
         <div class="feedback-body" id="feedback-body"></div>
       </div>
+
       <div class="metrics-card" id="metrics-card"></div>
-      <button class="btn btn-retry" id="btn-retry" type="button">다시 녹음하기</button>
+
+      <div class="section section-analyze" style="padding-top:0;">
+        <button class="btn btn-retry" id="btn-retry" type="button">다시 녹음하기</button>
+      </div>
     </section>
 
     <!-- 로딩 오버레이 -->
@@ -97,9 +140,6 @@
       <div class="spinner-ring"></div>
       <div class="loading-text">발음을 분석하고 있습니다...</div>
     </div>
-
-    <!-- 에러 메시지 영역 -->
-    <div class="error-message" id="error-message" style="display:none;"></div>
 
   </main>
 
