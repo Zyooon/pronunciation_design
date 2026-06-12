@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from pipeline.audio import load_and_trim_audio
+from pipeline.audio import load_trimmed_audio
 from pipeline.features import extract_features
 
 
@@ -178,7 +178,7 @@ def build_reference_vectors(
 
         for audio_path in audio_files:
             try:
-                y, sr = load_and_trim_audio(audio_path)
+                y, sr = load_trimmed_audio(audio_path)
                 features = extract_features(y, sr)
 
                 # 디버깅과 추적을 위해 어떤 파일에서 온 샘플인지 남겨둡니다.

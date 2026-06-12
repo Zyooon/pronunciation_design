@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from pipeline.audio import load_and_trim_audio
+from pipeline.audio import load_trimmed_audio
 from pipeline.db import DEFAULT_DB_PATH, initialize_database, insert_comparison_result
 from pipeline.features import extract_features
 from pipeline.reference import DEFAULT_WORDS_PATH, load_target_words
@@ -110,8 +110,8 @@ def compare_feature_pair(
     """
     같은 단어의 영어 발음과 한국어식 발음을 feature 단위로 비교합니다.
     """
-    en_y, en_sr = load_and_trim_audio(en_audio_path)
-    ko_y, ko_sr = load_and_trim_audio(ko_audio_path)
+    en_y, en_sr = load_trimmed_audio(en_audio_path)
+    ko_y, ko_sr = load_trimmed_audio(ko_audio_path)
 
     en_features = extract_features(en_y, en_sr)
     ko_features = extract_features(ko_y, ko_sr)
