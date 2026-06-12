@@ -4,21 +4,48 @@
  */
 
 async function fetchWords() {
-  const response = await fetch("/api/words");
-  if (!response.ok) {
-    throw new Error(`단어 목록 로드 실패: ${response.status}`);
+  try {
+    const response = await fetch("/api/words");
+    if (!response.ok) {
+      throw new Error(`단어 목록 로드 실패 (${response.status})`);
+    }
+    return response.json();
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error("서버에 연결할 수 없습니다. 네트워크 상태를 확인해주세요.");
+    }
+    throw err;
   }
-  return response.json();
 }
 
 async function analyzePronunciation(formData) {
-  const response = await fetch("/api/pronunciation/analyze", {
-    method: "POST",
-    body: formData,
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.detail || `분석 실패: ${response.status}`);
+  try {
+    const response = await fetch("/api/pronunciation/analyze", {
+      method: "POST",
+      body: formData,
+    });
+
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error(`서버 응답을 읽을 수 없습니다 (${response.status})`);
+    }
+
+    if (!response.ok) {
+      const detail = data.detail;
+      // FastAPI 검증 오류(list) vs 커스텀 오류(string)
+      const message = Array.isArray(detail)
+        ? detail.map((d) => d.msg || d.message || JSON.stringify(d)).join(", ")
+        : (detail || `분석 실패 (${response.status})`);
+      throw new Error(message);
+    }
+
+    return data;
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error("서버에 연결할 수 없습니다. 네트워크 상태를 확인해주세요.");
+    }
+    throw err;
   }
-  return data;
 }

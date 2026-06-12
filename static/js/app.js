@@ -31,17 +31,34 @@ const btnRetry         = document.getElementById("btn-retry");
 document.addEventListener("DOMContentLoaded", initApp);
 
 async function initApp() {
+  checkBrowserSupport();
   await loadWordList();
   bindEvents();
+}
+
+function checkBrowserSupport() {
+  const hasMediaDevices = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  const hasMediaRecorder = typeof MediaRecorder !== "undefined";
+  if (!hasMediaDevices || !hasMediaRecorder) {
+    btnRecord.disabled = true;
+    btnRecord.title = "이 브라우저는 마이크 녹음을 지원하지 않습니다";
+    recStatus.textContent = "녹음 미지원 — 파일 업로드를 이용해주세요";
+  }
 }
 
 // ── 단어 목록 로딩 ────────────────────────────────────
 async function loadWordList() {
   try {
     const words = await fetchWords();
+    if (!words.length) {
+      wordSelect.innerHTML = '<option value="">단어 목록이 비어 있습니다</option>';
+      showError("data/words.txt에 단어가 없습니다. 파일을 확인해주세요.");
+      return;
+    }
     renderWordOptions(words);
   } catch (err) {
-    showError("단어 목록을 불러오지 못했습니다. 서버를 확인해주세요.");
+    wordSelect.innerHTML = '<option value="">불러오기 실패</option>';
+    showError(err.message || "단어 목록을 불러오지 못했습니다. 서버를 확인해주세요.");
   }
 }
 
@@ -147,6 +164,11 @@ async function onRecordClick() {
     return;
   }
 
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showError("이 브라우저는 마이크 녹음을 지원하지 않습니다. Chrome, Firefox, Safari를 사용해주세요.");
+    return;
+  }
+
   hideError();
   uploadedFile = null;
   recordedBlob = null;
@@ -244,24 +266,53 @@ function onRetryClick() {
 function showResult(result) {
   document.getElementById("result-word").textContent         = result.word;
   document.getElementById("result-phoneme-pill").textContent = `/${result.phoneme}/`;
-  document.getElementById("score-number").textContent        = Math.round(result.score);
   document.getElementById("feedback-body").textContent       = result.feedback;
 
   const score = result.score;
-  let grade, gradeSub;
-  if (score >= 85) {
-    grade = "Excellent";  gradeSub = "기준 발음과 상당히 유사합니다.";
-  } else if (score >= 70) {
-    grade = "Good";       gradeSub = "전반적으로 좋지만 더 다듬을 수 있습니다.";
-  } else {
-    grade = "Needs Practice"; gradeSub = "조금 더 반복 연습해보세요.";
-  }
+  const { grade, gradeSub, gradeClass } = resolveGrade(score);
+
   document.getElementById("score-grade").textContent     = grade;
   document.getElementById("score-grade-sub").textContent = gradeSub;
 
+  const scoreCard = document.getElementById("score-card");
+  scoreCard.className = `score-card ${gradeClass}`;
+
   renderMetrics(result.details || {});
 
+  // 숨겨진 상태에서 표시 → 애니메이션 트리거
   resultSection.style.display = "block";
+
+  // 점수 카운트업 + 스크롤
+  animateScoreNumber(0, Math.round(score), 700);
+  setTimeout(() => {
+    resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, 100);
+}
+
+function resolveGrade(score) {
+  if (score >= 85) {
+    return { grade: "Excellent ✓", gradeSub: "기준 발음과 상당히 유사합니다.", gradeClass: "score-card--excellent" };
+  }
+  if (score >= 70) {
+    return { grade: "Good", gradeSub: "전반적으로 좋지만 더 다듬을 수 있습니다.", gradeClass: "score-card--good" };
+  }
+  return { grade: "Needs Practice", gradeSub: "조금 더 반복 연습해보세요.", gradeClass: "score-card--practice" };
+}
+
+function animateScoreNumber(from, to, durationMs) {
+  const el = document.getElementById("score-number");
+  const startTime = performance.now();
+
+  function step(now) {
+    const elapsed  = now - startTime;
+    const progress = Math.min(elapsed / durationMs, 1);
+    // easeOutQuart
+    const eased = 1 - Math.pow(1 - progress, 4);
+    el.textContent = Math.round(from + (to - from) * eased);
+    if (progress < 1) requestAnimationFrame(step);
+  }
+
+  requestAnimationFrame(step);
 }
 
 function renderMetrics(details) {
@@ -274,28 +325,43 @@ function renderMetrics(details) {
     spectral_centroid_score: "Spectral",
   };
 
-  const rows = Object.entries(labelMap)
-    .filter(([key]) => details[key] != null)
-    .map(([key, label]) => {
+  const entries = Object.entries(labelMap).filter(([key]) => details[key] != null);
+
+  if (!entries.length) {
+    card.innerHTML = "";
+    return;
+  }
+
+  // width를 0으로 먼저 렌더링한 뒤 rAF에서 실제 값을 적용해 CSS transition을 유발한다
+  card.innerHTML =
+    `<div class="metrics-label">DETAILED METRICS</div>` +
+    entries.map(([key, label]) => {
       const val = details[key];
       return `
         <div class="m-row">
           <div class="m-name">${label}</div>
-          <div class="m-track"><div class="m-fill" style="width:${val}%"></div></div>
+          <div class="m-track"><div class="m-fill" id="mf-${key}" style="width:0%"></div></div>
           <div class="m-val">${val}</div>
         </div>`;
     }).join("");
 
-  if (!rows) {
-    card.innerHTML = "";
-    return;
-  }
-  card.innerHTML = `<div class="metrics-label">DETAILED METRICS</div>${rows}`;
+  // 두 프레임 뒤에 실제 너비 적용 → transition 발동
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      entries.forEach(([key]) => {
+        const el = document.getElementById(`mf-${key}`);
+        if (el) el.style.width = `${details[key]}%`;
+      });
+    });
+  });
 }
 
 // ── 상태 초기화 ───────────────────────────────────────
 function resetResult() {
   resultSection.style.display = "none";
+  document.getElementById("score-number").textContent = "0";
+  const scoreCard = document.getElementById("score-card");
+  if (scoreCard) scoreCard.className = "score-card";
   hideError();
 }
 

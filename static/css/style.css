@@ -403,7 +403,9 @@ body {
 
 .btn-analyze:disabled {
   background: #cbd5e1;
+  color: #94a3b8;
   box-shadow: none;
+  opacity: 1; /* 색상으로 비활성을 표현하므로 opacity 재정의 */
 }
 
 /* 재시도 버튼 */
@@ -426,11 +428,25 @@ body {
   font-weight: 600;
   color: #dc2626;
   line-height: 1.55;
+  animation: fadeSlideUp 0.25s ease forwards;
+}
+
+/* 녹음 버튼 브라우저 미지원 시 */
+.btn-record:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
 }
 
 /* ── 결과 영역 ──────────────────────────────────────────── */
 .result-section {
   padding-bottom: 0;
+  animation: fadeSlideUp 0.35s ease forwards;
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .result-word-row {
@@ -464,6 +480,23 @@ body {
   text-align: center;
   color: #fff;
   box-shadow: 0 6px 24px rgba(59, 130, 246, 0.3);
+  transition: background 0.4s ease;
+}
+
+/* 등급별 색상 */
+.score-card--excellent {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  box-shadow: 0 6px 24px rgba(16, 185, 129, 0.35);
+}
+
+.score-card--good {
+  background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+  box-shadow: 0 6px 24px rgba(59, 130, 246, 0.3);
+}
+
+.score-card--practice {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  box-shadow: 0 6px 24px rgba(245, 158, 11, 0.35);
 }
 
 .score-label {
@@ -574,7 +607,8 @@ body {
   height: 100%;
   background: linear-gradient(90deg, #3b82f6, #6366f1);
   border-radius: 999px;
-  transition: width 0.7s cubic-bezier(0.34, 1.56, 0.64, 1);
+  width: 0;
+  transition: width 0.75s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .m-val {
