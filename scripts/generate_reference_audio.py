@@ -6,6 +6,7 @@ words.txt를 읽어 ElevenLabs(영어 4개 목소리) 오디오 파일을 생성
   data/reference_en/<Voice>/단어.mp3
 """
 
+import argparse
 import os
 from pathlib import Path
 
@@ -57,7 +58,22 @@ def generate_elevenlabs(client: ElevenLabs, text: str, voice_id: str, dest: Path
             f.write(chunk)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="ElevenLabs API로 영어 레퍼런스 오디오 파일을 생성합니다."
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="처리할 최대 단어(row) 수. 미지정 시 전체 처리.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+
     api_key = os.getenv("ELEVENLABS_API_KEY", "")
     if not api_key or api_key == "your_key_here":
         raise SystemExit("[ERROR] .env 파일에 유효한 ELEVENLABS_API_KEY를 설정해 주세요.")
@@ -68,6 +84,8 @@ def main() -> None:
         (EN_DIR / voice_name).mkdir(parents=True, exist_ok=True)
 
     words = load_words(WORDS_FILE)
+    if args.limit is not None:
+        words = words[: args.limit]
     print(f"단어 {len(words)}개 로드 완료\n")
 
     success: list[str] = []
