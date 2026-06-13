@@ -133,5 +133,5 @@ def extract_features(
         "spectral_centroid_mean": extract_spectral_centroid(waveform, sr),
     }
     if include_onset:
-        features.update(extract_onset_window_features(waveform, sr, onset_window_ms=onset_window_ms))
+        features.update(extract_onset_window_features(waveform, sr, window_ms=onset_window_ms))
     return features
