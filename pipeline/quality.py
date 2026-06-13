@@ -97,11 +97,11 @@ def _has_fuzzy_token_match(target_word: str, transcript_tokens: list[str]) -> bo
 
 
 def _is_confident_other_word(target_word: str, transcript_tokens: list[str]) -> bool:
-    """STT 결과가 확실히 다른 단어 하나일 때만 mismatch로 본다."""
-    if len(transcript_tokens) != 1:
+    """STT 결과의 모든 토큰이 목표 단어와 충분히 다르면 mismatch로 본다."""
+    if not transcript_tokens:
         return False
-    similarity = _similarity(target_word, transcript_tokens[0])
-    return similarity < _CONFIDENT_OTHER_WORD_THRESHOLD
+    best_similarity = max(_similarity(target_word, token) for token in transcript_tokens)
+    return best_similarity < _CONFIDENT_OTHER_WORD_THRESHOLD
 
 
 def _transcribe_audio(audio_path: str, target_word: str | None = None) -> str:
