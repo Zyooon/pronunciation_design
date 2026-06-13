@@ -30,6 +30,7 @@ USER_RECORDINGS_TABLE   = "user_recordings"
 USER_RECORDINGS_COLUMNS = [
     "id", "created_at", "word", "phoneme", "score", "grade",
     "feedback", "recording_path", "test_label",
+    "duration_ms", "rms_mean", "zcr_mean", "spectral_centroid_mean", "mfcc_distance",
 ]
 USER_RECORDINGS_LIMIT   = 200
 
@@ -161,6 +162,9 @@ def load_user_results_from_db(
         "rows": [],
         "label_summary": [],
         "phoneme_label_summary": [],
+        "phoneme_label_breakdown": [],
+        "label_feature_summary": [],
+        "score_by_label": {},
         "latest_only": latest_only,
         "error": None,
     }
@@ -229,11 +233,43 @@ def load_user_results_from_db(
             )
         ]
 
+        phoneme_label_breakdown = [
+            dict(row)
+            for row in conn.execute(
+                f"{_cte}SELECT phoneme, test_label, COUNT(*) AS count,"
+                f" ROUND(AVG(score), 1) AS avg_score"
+                f" FROM {_src} GROUP BY phoneme, test_label ORDER BY phoneme, test_label"
+            )
+        ]
+
+        label_feature_summary = [
+            dict(row)
+            for row in conn.execute(
+                f"{_cte}SELECT test_label,"
+                f" ROUND(AVG(duration_ms), 1) AS avg_duration_ms,"
+                f" ROUND(AVG(rms_mean), 6) AS avg_rms_mean,"
+                f" ROUND(AVG(zcr_mean), 6) AS avg_zcr_mean,"
+                f" ROUND(AVG(mfcc_distance), 3) AS avg_mfcc_distance"
+                f" FROM {_src} WHERE duration_ms IS NOT NULL"
+                f" GROUP BY test_label ORDER BY test_label"
+            )
+        ]
+
+        score_by_label: dict[str, list[float]] = {}
+        for srow in conn.execute(
+            f"{_cte}SELECT test_label, score FROM {_src} WHERE score IS NOT NULL"
+        ):
+            key = srow["test_label"] or "NULL"
+            score_by_label.setdefault(key, []).append(float(srow["score"]))
+
         result["row_count"] = total
         result["columns"] = USER_RECORDINGS_COLUMNS
         result["rows"] = rows
         result["label_summary"] = label_summary
         result["phoneme_label_summary"] = phoneme_label_summary
+        result["phoneme_label_breakdown"] = phoneme_label_breakdown
+        result["label_feature_summary"] = label_feature_summary
+        result["score_by_label"] = score_by_label
         return result
 
     except sqlite3.Error as e:

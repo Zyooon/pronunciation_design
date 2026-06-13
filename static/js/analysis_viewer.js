@@ -410,8 +410,47 @@ function renderErrorTable(rows) {
   `).join("");
 }
 
+// ── 차트 레지스트리 ───────────────────────────────────────────────────────────
+const _charts = {};
+
+function _destroyChart(id) {
+  if (_charts[id]) { _charts[id].destroy(); delete _charts[id]; }
+}
+
+function _createChart(id, config) {
+  _destroyChart(id);
+  const canvas = document.getElementById(id);
+  if (!canvas) return null;
+  _charts[id] = new Chart(canvas, config);
+  return _charts[id];
+}
+
+const _USER_CHART_IDS = [
+  "chart-label-score", "chart-score-dist",
+  "chart-phoneme-label", "chart-label-feature", "chart-row-detail",
+];
+
+function _destroyUserCharts() {
+  _USER_CHART_IDS.forEach(_destroyChart);
+}
+
+// ── 라벨 색상 ─────────────────────────────────────────────────────────────────
+const _LABEL_PALETTE = {
+  good:           { bg: "rgba(16,185,129,0.7)",  radar: "rgba(16,185,129,0.15)",  border: "#10b981" },
+  korean_like:    { bg: "rgba(245,158,11,0.7)",  radar: "rgba(245,158,11,0.15)",  border: "#f59e0b" },
+  wrong_or_noisy: { bg: "rgba(239,68,68,0.7)",   radar: "rgba(239,68,68,0.15)",   border: "#ef4444" },
+  unlabeled:      { bg: "rgba(107,124,143,0.5)", radar: "rgba(107,124,143,0.1)",  border: "#6b7c8f" },
+  NULL:           { bg: "rgba(148,163,184,0.5)", radar: "rgba(148,163,184,0.1)",  border: "#94a3b8" },
+};
+
+function _labelColor(label, mode = "bg") {
+  const key = label ?? "NULL";
+  return (_LABEL_PALETTE[key] || _LABEL_PALETTE.NULL)[mode];
+}
+
 // ── User Results ──────────────────────────────────────────────────────────────
 async function loadUserResults(latestOnly = true) {
+  _destroyUserCharts();
   const wrap = document.getElementById("user-results-wrap");
   wrap.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
 
@@ -449,17 +488,14 @@ async function loadUserResults(latestOnly = true) {
       ? data.columns
       : Object.keys(data.rows[0]);
 
-    const theadHtml = columns.map((c) => `<th>${escHtml(c)}</th>`).join("");
-    const tbodyHtml = data.rows.map((r) =>
-      `<tr>${columns.map((c) => `<td>${escHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
-    ).join("");
-
     const displayLabel = latestOnly
       ? `최신 ${data.rows.length}개 (word+label 중복 제거)`
       : `최근 ${data.rows.length}개`;
 
-    const labelSummaryHtml = _renderLabelSummary(data.label_summary);
-    const phonemeSummaryHtml = _renderPhonemeLabelSummary(data.phoneme_label_summary);
+    const theadHtml = columns.map((c) => `<th>${escHtml(c)}</th>`).join("");
+    const tbodyHtml = data.rows.map((r, idx) =>
+      `<tr class="clickable" data-idx="${idx}">${columns.map((c) => `<td>${escHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
+    ).join("");
 
     wrap.innerHTML = `
       <div class="meta-box">
@@ -469,17 +505,278 @@ async function loadUserResults(latestOnly = true) {
         &nbsp;·&nbsp;
         <strong>표시:</strong> ${displayLabel}
       </div>
-      ${labelSummaryHtml}
-      ${phonemeSummaryHtml}
-      <div class="table-wrap">
-        <table class="data-table">
+      ${_renderLabelSummary(data.label_summary)}
+
+      <div class="chart-grid" style="margin-top:16px;">
+        <div class="chart-box">
+          <div class="chart-title">라벨별 평균 점수</div>
+          <div class="chart-canvas-wrap"><canvas id="chart-label-score"></canvas></div>
+        </div>
+        <div class="chart-box">
+          <div class="chart-title">점수 분포</div>
+          <div class="chart-canvas-wrap"><canvas id="chart-score-dist"></canvas></div>
+        </div>
+      </div>
+
+      <div class="chart-grid single">
+        <div class="chart-box">
+          <div class="chart-title">음소별 라벨 평균 점수</div>
+          <div class="chart-canvas-wrap"><canvas id="chart-phoneme-label"></canvas></div>
+        </div>
+      </div>
+
+      <div class="chart-grid single">
+        <div class="chart-box">
+          <div class="chart-title">라벨별 Feature 비교 (Penalty 프록시 · 값 정규화)</div>
+          <div class="chart-canvas-wrap"><canvas id="chart-label-feature"></canvas></div>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-bottom:16px;">
+        <table id="user-table" class="data-table">
           <thead><tr>${theadHtml}</tr></thead>
           <tbody>${tbodyHtml}</tbody>
         </table>
-      </div>`;
+      </div>
+
+      <div id="user-row-detail" class="detail-panel" style="display:none;"></div>
+    `;
+
+    _renderLabelScoreChart(data.label_summary);
+    _renderScoreDistChart(data.score_by_label);
+    _renderPhonemeLabelChart(data.phoneme_label_breakdown);
+    _renderLabelFeatureChart(data.label_feature_summary);
+
+    const rows = data.rows;
+    wrap.querySelectorAll("#user-table tbody tr.clickable").forEach((tr) => {
+      const idx = parseInt(tr.dataset.idx, 10);
+      tr.addEventListener("click", () => _onUserRowClick(tr, rows[idx]));
+    });
+
   } catch (err) {
     wrap.innerHTML = errorHtml(err.message);
   }
+}
+
+// ── Chart 1: 라벨별 평균 점수 ─────────────────────────────────────────────────
+function _renderLabelScoreChart(labelSummary) {
+  if (!labelSummary || !labelSummary.length) return;
+  const labels = labelSummary.map((s) => s.test_label ?? "NULL");
+  const scores = labelSummary.map((s) => s.avg_score ?? 0);
+  const counts = labelSummary.map((s) => s.count);
+  _createChart("chart-label-score", {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        label: "평균 점수",
+        data: scores,
+        backgroundColor: labels.map((l) => _labelColor(l, "bg")),
+        borderColor:     labels.map((l) => _labelColor(l, "border")),
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { x: { min: 0, max: 100, title: { display: true, text: "점수" } } },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => ` avg ${ctx.raw} / ${counts[ctx.dataIndex]}건` } },
+      },
+    },
+  });
+}
+
+// ── Chart 2: 음소별 라벨 평균 점수 ───────────────────────────────────────────
+function _renderPhonemeLabelChart(breakdown) {
+  if (!breakdown || !breakdown.length) return;
+  const phonemes  = [...new Set(breakdown.map((b) => b.phoneme))].sort();
+  const labelKeys = [...new Set(breakdown.map((b) => b.test_label ?? "NULL"))].sort();
+
+  const datasets = labelKeys.map((label) => ({
+    label,
+    data: phonemes.map((p) => {
+      const found = breakdown.find((b) => b.phoneme === p && (b.test_label ?? "NULL") === label);
+      return found ? found.avg_score : null;
+    }),
+    backgroundColor: _labelColor(label, "bg"),
+    borderColor:     _labelColor(label, "border"),
+    borderWidth: 1,
+  }));
+
+  _createChart("chart-phoneme-label", {
+    type: "bar",
+    data: { labels: phonemes.map((p) => `/${p}/`), datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { y: { min: 0, max: 100, title: { display: true, text: "점수" } } },
+      plugins: { legend: { display: true, position: "top" } },
+    },
+  });
+}
+
+// ── Chart 3: 라벨별 Feature 비교 (Radar) ─────────────────────────────────────
+function _renderLabelFeatureChart(featureSummary) {
+  if (!featureSummary || !featureSummary.length) return;
+
+  const AXES = [
+    { key: "avg_mfcc_distance", label: "MFCC Dist" },
+    { key: "avg_zcr_mean",      label: "ZCR" },
+    { key: "avg_rms_mean",      label: "RMS" },
+    { key: "avg_duration_ms",   label: "Duration" },
+  ];
+
+  const rawValues = featureSummary.map((s) => AXES.map((ax) => s[ax.key] ?? 0));
+  const mins = AXES.map((_, i) => Math.min(...rawValues.map((r) => r[i])));
+  const maxs = AXES.map((_, i) => Math.max(...rawValues.map((r) => r[i])));
+  const normalized = rawValues.map((row) =>
+    row.map((v, i) =>
+      maxs[i] > mins[i] ? Math.round(((v - mins[i]) / (maxs[i] - mins[i])) * 100) / 100 : 0.5
+    )
+  );
+
+  const datasets = featureSummary.map((s, idx) => {
+    const label = s.test_label ?? "NULL";
+    return {
+      label,
+      data: normalized[idx],
+      backgroundColor: _labelColor(label, "radar"),
+      borderColor:     _labelColor(label, "border"),
+      borderWidth: 2,
+      pointRadius: 3,
+    };
+  });
+
+  _createChart("chart-label-feature", {
+    type: "radar",
+    data: { labels: AXES.map((ax) => ax.label), datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        r: {
+          min: 0, max: 1,
+          ticks: { display: false },
+          pointLabels: { font: { size: 11 } },
+        },
+      },
+      plugins: { legend: { display: true, position: "top" } },
+    },
+  });
+}
+
+// ── Chart 4: 점수 분포 ────────────────────────────────────────────────────────
+function _renderScoreDistChart(scoreByLabel) {
+  if (!scoreByLabel || !Object.keys(scoreByLabel).length) return;
+
+  const BUCKETS = [
+    { label: "0–20",   min: 0,  max: 20  },
+    { label: "20–40",  min: 20, max: 40  },
+    { label: "40–60",  min: 40, max: 60  },
+    { label: "60–70",  min: 60, max: 70  },
+    { label: "70–80",  min: 70, max: 80  },
+    { label: "80–90",  min: 80, max: 90  },
+    { label: "90–100", min: 90, max: 101 },
+  ];
+
+  const labelKeys = Object.keys(scoreByLabel).sort();
+  const datasets = labelKeys.map((label) => ({
+    label,
+    data: BUCKETS.map(({ min, max }) =>
+      scoreByLabel[label].filter((s) => s >= min && s < max).length
+    ),
+    backgroundColor: _labelColor(label, "bg"),
+    borderColor:     _labelColor(label, "border"),
+    borderWidth: 1,
+  }));
+
+  _createChart("chart-score-dist", {
+    type: "bar",
+    data: { labels: BUCKETS.map((b) => b.label), datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
+      plugins: { legend: { display: true, position: "top" } },
+    },
+  });
+}
+
+// ── Chart 5: Row 상세 클릭 ────────────────────────────────────────────────────
+function _onUserRowClick(tr, row) {
+  document.querySelectorAll("#user-table tbody tr").forEach((r) => r.classList.remove("selected"));
+  tr.classList.add("selected");
+
+  const panel  = document.getElementById("user-row-detail");
+  const label  = row.test_label ?? "NULL";
+  const score  = row.score ?? "—";
+  const grade  = row.grade ?? "";
+  const color  = _labelColor(label, "border");
+
+  const features = [
+    ["Duration",  row.duration_ms             != null ? `${row.duration_ms} ms`                            : "—"],
+    ["RMS",       row.rms_mean                != null ? Number(row.rms_mean).toFixed(4)                    : "—"],
+    ["ZCR",       row.zcr_mean                != null ? Number(row.zcr_mean).toFixed(4)                    : "—"],
+    ["Spectral",  row.spectral_centroid_mean  != null ? `${Number(row.spectral_centroid_mean).toFixed(0)} Hz` : "—"],
+    ["MFCC Dist", row.mfcc_distance           != null ? Number(row.mfcc_distance).toFixed(3)               : "—"],
+  ];
+
+  const featureHtml = features.map(([name, val]) => `
+    <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f0f7ff;">
+      <span style="color:#6b7c8f;font-size:12px;">${name}</span>
+      <span style="font-variant-numeric:tabular-nums;">${val}</span>
+    </div>`).join("");
+
+  panel.innerHTML = `
+    <div class="user-row-detail-inner">
+      <div class="detail-chart-col">
+        <h3>${escHtml(row.word ?? "")} <span>/${escHtml(row.phoneme ?? "")}/</span></h3>
+        <div style="position:relative;height:110px;margin:8px 0;">
+          <canvas id="chart-row-detail"></canvas>
+          <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);font-size:26px;font-weight:700;color:${color};">${score}</div>
+        </div>
+        <div class="grade-badge">${escHtml(grade)}</div>
+        <div style="font-size:11px;color:#6b7c8f;margin-top:4px;">${escHtml(label)}</div>
+      </div>
+      <div class="detail-info-col">
+        <div class="col-title">Features</div>
+        ${featureHtml}
+        <div class="col-title" style="margin-top:12px;">Feedback</div>
+        <div style="color:#16324f;font-size:13px;margin-top:4px;line-height:1.6;">${escHtml(row.feedback ?? "—")}</div>
+      </div>
+    </div>
+  `;
+  panel.style.display = "block";
+
+  const numScore = parseFloat(row.score) || 0;
+  _createChart("chart-row-detail", {
+    type: "doughnut",
+    data: {
+      labels: ["점수", ""],
+      datasets: [{
+        data: [numScore, 100 - numScore],
+        backgroundColor: [color, "#f0f7ff"],
+        borderColor:     [color, "#d8e9f7"],
+        borderWidth: 1,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: "72%",
+      rotation: -90,
+      circumference: 180,
+      plugins: {
+        legend: { display: false },
+        tooltip: { filter: (item) => item.dataIndex === 0 },
+      },
+    },
+  });
+
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 // ── 유틸 ─────────────────────────────────────────────────────────────────────
@@ -494,18 +791,6 @@ function _renderLabelSummary(summary) {
     </span>`;
   }).join("");
   return `<div class="meta-box" style="margin-top:6px;"><strong>라벨별:</strong> ${cells}</div>`;
-}
-
-function _renderPhonemeLabelSummary(summary) {
-  if (!summary || !summary.length) return "";
-  const cells = summary.map((s) => {
-    const phoneme = s.phoneme ?? "NULL";
-    const avg     = s.avg_score != null ? s.avg_score : "—";
-    return `<span class="pill pill-ok" style="margin-right:6px;">
-      <strong>/${escHtml(String(phoneme))}/</strong>: ${s.count}건 · avg ${avg}
-    </span>`;
-  }).join("");
-  return `<div class="meta-box" style="margin-top:6px;"><strong>음소별:</strong> ${cells}</div>`;
 }
 
 function escHtml(str) {

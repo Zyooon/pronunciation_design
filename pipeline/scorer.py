@@ -8,6 +8,9 @@ EPSILON = 1e-8
 AudioFeatures = dict[str, float | list[float]]
 ReferenceVector = dict[str, float | list[float] | str]
 
+# /r/, /l/은 마찰음 특성이 약하므로 일반 자음 scoring과 분리한다.
+_LIQUID_PHONEMES: frozenset[str] = frozenset({"r", "l"})
+
 # ── Quality penalty thresholds ────────────────────────────────────────────────
 _MIN_DURATION_MS       = 150.0   # 이보다 짧으면 의미 있는 발음이 아닐 가능성이 높다
 _RMS_SILENT            = 0.005   # 사실상 무음
@@ -15,6 +18,12 @@ _RMS_VERY_QUIET        = 0.015   # 목소리가 매우 작음
 _ZCR_ACTIVE_NOISE      = 0.35    # 고주파 잡음 의심 수준
 _RMS_LOW_FOR_ZCR_CHECK = 0.020   # ZCR 잡음 체크 시 함께 보는 RMS 임계치
 _ZCR_EXTREME           = 0.50    # 발화와 무관한 극단적 잡음
+
+# ── Pronunciation penalty thresholds ─────────────────────────────────────────
+_MFCC_LOW_THRESHOLD     = 55.0   # MFCC 점수가 이 미만이면 감점
+_DURATION_LOW_THRESHOLD = 45.0   # duration 점수가 이 미만이면 감점
+_CENTROID_LOW_THRESHOLD = 45.0   # spectral centroid 점수가 이 미만이면 감점
+_VOWEL_MFCC_DOUBLE      = 60.0   # 모음에서 MFCC + centroid 동시 저조 시 추가 감점 기준
 
 
 class ScoreResult(TypedDict):
@@ -94,10 +103,8 @@ def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dic
     """
     모음 음소를 채점합니다.
 
-    MVP 기준:
-        - MFCC: 발음 음색/조음 차이
-        - duration: 장단 차이 프록시
-        - RMS: 너무 강하거나 약한 발음 여부
+    가중치:
+        MFCC 70% · duration 15% · spectral_centroid 10% · RMS 5%
 
     Returns:
         세부 점수와 최종 점수
@@ -113,35 +120,38 @@ def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dic
         ref_value=float(reference["duration_ms"]),
     )
 
+    centroid_score = ratio_feature_score(
+        user_value=float(user_features["spectral_centroid_mean"]),
+        ref_value=float(reference["spectral_centroid_mean"]),
+    )
+
     rms_score = ratio_feature_score(
         user_value=float(user_features["rms_mean"]),
         ref_value=float(reference["rms_mean"]),
     )
 
-    # MVP에서는 MFCC를 가장 중요하게 보고,
-    # duration과 RMS는 보조 지표로 사용합니다.
     final_score = (
-        mfcc_score * 0.65
-        + duration_score * 0.25
-        + rms_score * 0.10
+        mfcc_score * 0.70
+        + duration_score * 0.15
+        + centroid_score * 0.10
+        + rms_score * 0.05
     )
 
     return {
-        "score": round(float(final_score), 1),
-        "mfcc_score": round(float(mfcc_score), 1),
-        "duration_score": round(float(duration_score), 1),
-        "rms_score": round(float(rms_score), 1),
+        "score":                   round(float(final_score), 1),
+        "mfcc_score":              round(float(mfcc_score), 1),
+        "duration_score":          round(float(duration_score), 1),
+        "spectral_centroid_score": round(float(centroid_score), 1),
+        "rms_score":               round(float(rms_score), 1),
     }
 
 
 def score_consonant(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     """
-    자음 음소를 채점합니다.
+    자음 음소를 채점합니다 (/θ/, /f/, /v/ 계열).
 
-    MVP 기준:
-        - MFCC: 전체 음색/조음 차이
-        - ZCR: 마찰음 계열 감지
-        - spectral centroid: 고주파 중심성 비교
+    가중치:
+        MFCC 55% · ZCR 35% · spectral_centroid 10%
 
     Returns:
         세부 점수와 최종 점수
@@ -170,10 +180,60 @@ def score_consonant(user_features: AudioFeatures, reference: ReferenceVector) ->
     )
 
     return {
-        "score": round(float(final_score), 1),
-        "mfcc_score": round(float(mfcc_score), 1),
-        "zcr_score": round(float(zcr_score), 1),
+        "score":                   round(float(final_score), 1),
+        "mfcc_score":              round(float(mfcc_score), 1),
+        "zcr_score":               round(float(zcr_score), 1),
         "spectral_centroid_score": round(float(centroid_score), 1),
+    }
+
+
+def score_liquid(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
+    """
+    /r/, /l/ 음소를 채점합니다.
+
+    유음(liquid)은 마찰음 특성이 약해 ZCR이 채점 지표로 적합하지 않습니다.
+    조음 위치를 잘 반영하는 MFCC와 스펙트럼 중심 위주로 채점합니다.
+
+    가중치:
+        MFCC 75% · duration 15% · spectral_centroid 10%
+
+    Returns:
+        세부 점수와 최종 점수
+    """
+    mfcc_score = z_score_distance_score(
+        user_values=user_features["mfcc_mean"],
+        ref_mean=reference["mfcc_mean"],
+        ref_std=reference["mfcc_std"],
+    )
+
+    duration_score = ratio_feature_score(
+        user_value=float(user_features["duration_ms"]),
+        ref_value=float(reference["duration_ms"]),
+    )
+
+    centroid_score = ratio_feature_score(
+        user_value=float(user_features["spectral_centroid_mean"]),
+        ref_value=float(reference["spectral_centroid_mean"]),
+    )
+
+    # ZCR은 참고용으로만 계산하고 채점에는 포함하지 않습니다.
+    zcr_score = ratio_feature_score(
+        user_value=float(user_features["zcr_mean"]),
+        ref_value=float(reference["zcr_mean"]),
+    )
+
+    final_score = (
+        mfcc_score * 0.75
+        + duration_score * 0.15
+        + centroid_score * 0.10
+    )
+
+    return {
+        "score":                   round(float(final_score), 1),
+        "mfcc_score":              round(float(mfcc_score), 1),
+        "duration_score":          round(float(duration_score), 1),
+        "spectral_centroid_score": round(float(centroid_score), 1),
+        "zcr_score":               round(float(zcr_score), 1),
     }
 
 
@@ -233,6 +293,50 @@ def compute_quality_penalty(
     return duration_penalty, volume_penalty, noise_penalty
 
 
+def compute_pronunciation_penalty(
+    sub_scores: dict[str, float],
+    phoneme_type: str,
+) -> float:
+    """발음 유사도 세부 점수 기반 감점을 계산한다.
+
+    녹음 품질과 무관하게, 발음 유사도 점수 자체가 낮은데
+    base_score가 높게 나오는 경우를 방어하기 위한 패널티다.
+    test_label을 사용하지 않는다.
+
+    Args:
+        sub_scores: score_vowel / score_consonant / score_liquid 반환값 (score 키 제거 후)
+        phoneme_type: "vowel" | "consonant" | "unknown"
+
+    Returns:
+        0 이상의 감점값
+    """
+    # 없는 항목은 중립값(100)으로 처리해 불필요한 감점을 막는다
+    mfcc_score    = sub_scores.get("mfcc_score", 100.0)
+    duration_score = sub_scores.get("duration_score", 100.0)
+    centroid_score = sub_scores.get("spectral_centroid_score", 100.0)
+
+    penalty = 0.0
+
+    if mfcc_score < _MFCC_LOW_THRESHOLD:
+        penalty += 8.0
+
+    if duration_score < _DURATION_LOW_THRESHOLD:
+        penalty += 4.0
+
+    if centroid_score < _CENTROID_LOW_THRESHOLD:
+        penalty += 4.0
+
+    # 모음에서 MFCC와 spectral centroid가 동시에 저조하면 추가 감점
+    if (
+        phoneme_type == "vowel"
+        and mfcc_score < _VOWEL_MFCC_DOUBLE
+        and centroid_score < _VOWEL_MFCC_DOUBLE
+    ):
+        penalty += 6.0
+
+    return penalty
+
+
 def get_feedback(score: float, phoneme: str, phoneme_type: str) -> str:
     """
     점수와 음소에 따라 간단한 피드백 문장을 반환합니다.
@@ -273,27 +377,24 @@ def _build_phoneme_score_details(
     user_features: AudioFeatures,
     reference: ReferenceVector,
     phoneme_type: str,
+    phoneme: str,
 ) -> dict[str, float]:
+    if phoneme in _LIQUID_PHONEMES:
+        return score_liquid(user_features, reference)
     if phoneme_type == "vowel":
         return score_vowel(user_features, reference)
     if phoneme_type == "consonant":
         return score_consonant(user_features, reference)
-    # 모음/자음 타입을 알 수 없으면 MFCC만으로 최소 채점합니다.
+    # 타입 불명 — MFCC만으로 최소 채점
     mfcc_score = z_score_distance_score(
         user_values=user_features["mfcc_mean"],
         ref_mean=reference["mfcc_mean"],
         ref_std=reference["mfcc_std"],
     )
     return {
-        "score": round(float(mfcc_score), 1),
+        "score":      round(float(mfcc_score), 1),
         "mfcc_score": round(float(mfcc_score), 1),
     }
-
-def require_float(features: AudioFeatures, key: str) -> float:
-    value = features.get(key)
-    if value is None:
-        raise KeyError(f"필수 feature가 없습니다: {key}")
-    return float(value)
 
 
 def score_pronunciation(
@@ -304,7 +405,8 @@ def score_pronunciation(
     """
     사용자 음성 특징과 reference vector를 비교해 최종 채점 결과를 반환합니다.
 
-    품질 패널티를 base score에서 차감해 final score를 산출한다.
+    quality_penalty(녹음 품질)와 pronunciation_penalty(발음 유사도)를
+    base_score에서 차감해 final_score를 산출한다.
     test_label은 채점에 사용하지 않는다.
 
     Args:
@@ -318,12 +420,17 @@ def score_pronunciation(
             "feedback": "...",
             "details": {
                 "mfcc_score": 82.0,
-                ...,
+                "duration_score": 70.0,
+                "spectral_centroid_score": 65.0,
+                "rms_score": 80.0,
                 "base_score": 78.5,
-                "quality_penalty": 3.0,
+                "quality_penalty": 0.0,
                 "duration_penalty": 0.0,
                 "volume_penalty": 0.0,
-                "noise_penalty": 3.0,
+                "noise_penalty": 0.0,
+                "pronunciation_penalty": 0.0,
+                "total_penalty": 0.0,
+                "final_score": 78.5,
                 "duration_ratio": 1.05,
                 "rms_mean": 0.042,
                 "zcr_mean": 0.18,
@@ -332,14 +439,14 @@ def score_pronunciation(
         }
     """
     phoneme_type = str(reference.get("phoneme_type", "unknown"))
-    sub_scores = _build_phoneme_score_details(user_features, reference, phoneme_type)
+    sub_scores = _build_phoneme_score_details(user_features, reference, phoneme_type, phoneme)
     base_score = float(sub_scores.pop("score"))
 
-    duration_ms = require_float(user_features, "duration_ms")
-    rms_mean = require_float(user_features, "rms_mean")
-    zcr_mean = require_float(user_features, "zcr_mean")
-    spectral_centroid_mean = require_float(user_features, "spectral_centroid_mean")
-    ref_duration_ms = float(reference.get("duration_ms", 500))
+    duration_ms            = float(user_features.get("duration_ms", 0))
+    rms_mean               = float(user_features.get("rms_mean", 0))
+    zcr_mean               = float(user_features.get("zcr_mean", 0))
+    spectral_centroid_mean = float(user_features.get("spectral_centroid_mean", 0))
+    ref_duration_ms        = float(reference.get("duration_ms", 500))
 
     duration_penalty, volume_penalty, noise_penalty = compute_quality_penalty(
         duration_ms=duration_ms,
@@ -349,8 +456,11 @@ def score_pronunciation(
     )
     quality_penalty = duration_penalty + volume_penalty + noise_penalty
 
+    pronunciation_penalty = compute_pronunciation_penalty(sub_scores, phoneme_type)
+
+    total_penalty = quality_penalty + pronunciation_penalty
     duration_ratio = duration_ms / (ref_duration_ms + EPSILON)
-    final_score = float(np.clip(base_score - quality_penalty, 0.0, 100.0))
+    final_score = float(np.clip(base_score - total_penalty, 0.0, 100.0))
 
     feedback = get_feedback(final_score, phoneme, phoneme_type)
 
@@ -361,15 +471,17 @@ def score_pronunciation(
         "duration_penalty":       round(duration_penalty, 1),
         "volume_penalty":         round(volume_penalty, 1),
         "noise_penalty":          round(noise_penalty, 1),
+        "pronunciation_penalty":  round(pronunciation_penalty, 1),
+        "total_penalty":          round(total_penalty, 1),
+        "final_score":            round(final_score, 1),
         "duration_ratio":         round(duration_ratio, 3),
         "rms_mean":               round(rms_mean, 6),
         "zcr_mean":               round(zcr_mean, 6),
         "spectral_centroid_mean": round(spectral_centroid_mean, 2),
-        "final_score":            round(final_score, 1),
     }
 
     return {
-        "score": round(final_score, 1),
+        "score":    round(final_score, 1),
         "feedback": feedback,
-        "details": details,
+        "details":  details,
     }
