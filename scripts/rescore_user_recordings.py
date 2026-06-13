@@ -4,6 +4,7 @@ import logging
 import sqlite3
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -14,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from pipeline.audio import load_trimmed_audio
 from pipeline.db import DEFAULT_DB_PATH, save_user_recording_result
 from pipeline.features import extract_features
+from pipeline.quality import evaluate_recording_quality
 from pipeline.reference import load_reference_vectors
 from pipeline.scorer import score_pronunciation
 
@@ -61,12 +63,20 @@ def fetch_latest_rows(conn: sqlite3.Connection, labels: list[str] | None, limit:
     return conn.execute(sql, params).fetchall()
 
 
-def derive_grade(score: float) -> str:
+def derive_grade(score: float | None) -> str | None:
+    if score is None:
+        return None
     if score >= 85:
         return "Excellent"
     if score >= 70:
         return "Good"
     return "Needs Practice"
+
+
+def format_score(score: float | None) -> str:
+    if score is None:
+        return "None"
+    return f"{score:.1f}"
 
 
 def compute_mfcc_distance(user_mfcc: list[float] | None, ref_mfcc: list[float] | None) -> float | None:
@@ -105,14 +115,22 @@ def rescore_row(row: sqlite3.Row, en_vectors: dict, ko_vectors: dict, dry_run: b
     elif phoneme == "l":
         liquid_alt_reference = en_vectors.get("r")
     ko_reference = ko_vectors.get(phoneme)
+
     waveform, sr = load_trimmed_audio(audio_path)
     features = extract_features(waveform, sr)
+    quality_result = evaluate_recording_quality(
+        features=features,
+        reference=reference,
+        audio_path=str(audio_path),
+        target_word=word,
+    )
     score_result = score_pronunciation(
         features,
         reference,
         phoneme,
         ko_reference=ko_reference,
         liquid_alt_reference=liquid_alt_reference,
+        recording_quality_result=quality_result,
     )
     score = score_result["score"]
     details = score_result.get("details", {})
@@ -121,9 +139,15 @@ def rescore_row(row: sqlite3.Row, en_vectors: dict, ko_vectors: dict, dry_run: b
 
     if dry_run:
         log.info(
-            "[dry-run] id=%s word=%s label=%s old=%s new=%.1f ko_penalty=%.1f original_created_at=%s",
-            row["id"], word, row["test_label"] or "NULL", row["score"], score,
-            details.get("korean_like_penalty", 0.0), original_created_at,
+            "[dry-run] id=%s word=%s label=%s old=%s new=%s quality=%s issues=%s original_created_at=%s",
+            row["id"],
+            word,
+            row["test_label"] or "NULL",
+            row["score"],
+            format_score(score),
+            score_result.get("recording_quality_status"),
+            score_result.get("issue_flags"),
+            original_created_at,
         )
         return "dry_run"
 
@@ -143,7 +167,15 @@ def rescore_row(row: sqlite3.Row, en_vectors: dict, ko_vectors: dict, dry_run: b
         details=details,
         created_at=original_created_at,
     )
-    log.info("저장 완료: id=%s word=%s label=%s new=%.1f", row["id"], word, row["test_label"] or "NULL", score)
+    log.info(
+        "저장 완료: id=%s word=%s label=%s new=%s quality=%s issues=%s",
+        row["id"],
+        word,
+        row["test_label"] or "NULL",
+        format_score(score),
+        score_result.get("recording_quality_status"),
+        score_result.get("issue_flags"),
+    )
     return "ok"
 
 
