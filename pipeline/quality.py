@@ -1,5 +1,13 @@
-from typing import Literal, TypedDict
+from __future__ import annotations
 
+import logging
+from typing import TYPE_CHECKING, Literal, TypedDict
+
+if TYPE_CHECKING:
+    from faster_whisper import WhisperModel
+
+
+log = logging.getLogger(__name__)
 
 AudioFeatures = dict[str, float | list[float]]
 ReferenceVector = dict[str, float | list[float] | str]
@@ -16,10 +24,13 @@ _ZCR_HIGH_NOISE = 0.35
 _RMS_LOW_FOR_NOISE_CHECK = 0.020
 _ZCR_EXTREME = 0.50
 
+_whisper_model: WhisperModel | None = None
+
 
 class RecordingQualityResult(TypedDict):
     status: QualityStatus
     issue_flags: list[str]
+    word_match: bool | None
 
 
 def _get_float_value(values: AudioFeatures | ReferenceVector, key: str) -> float | None:
@@ -30,6 +41,40 @@ def _get_float_value(values: AudioFeatures | ReferenceVector, key: str) -> float
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _load_whisper_model() -> WhisperModel:
+    global _whisper_model
+    if _whisper_model is None:
+        from faster_whisper import WhisperModel as _WhisperModel
+        _whisper_model = _WhisperModel("tiny", device="cpu", compute_type="int8")
+    return _whisper_model
+
+
+def check_word_match(audio_path: str, target_word: str) -> bool:
+    """STT로 녹음을 transcribe해 target_word 포함 여부를 확인한다.
+
+    Args:
+        audio_path: 녹음 파일 경로
+        target_word: 확인할 대상 단어
+
+    Returns:
+        transcribed 텍스트에 target_word(소문자)가 있으면 True.
+        STT 오류 발생 시 True(fail open)를 반환한다.
+    """
+    try:
+        model = _load_whisper_model()
+        segments, _ = model.transcribe(audio_path, language="en", beam_size=1)
+        transcribed = " ".join(segment.text for segment in segments).lower().strip()
+        return target_word.lower().strip() in transcribed
+    except Exception:
+        log.warning(
+            "STT word match 확인 실패 (fail open): audio_path=%s, target_word=%s",
+            audio_path,
+            target_word,
+            exc_info=True,
+        )
+        return True
 
 
 def _has_bad_duration(duration_ms: float, reference_duration_ms: float | None) -> list[str]:
@@ -76,8 +121,15 @@ def _has_bad_noise(zcr_mean: float | None, rms_mean: float | None) -> list[str]:
 def evaluate_recording_quality(
     features: AudioFeatures,
     reference: ReferenceVector | None = None,
+    audio_path: str | None = None,
+    target_word: str | None = None,
 ) -> RecordingQualityResult:
-    """녹음 품질 문제를 발음 점수와 분리해서 판단합니다."""
+    """녹음 품질 문제를 발음 점수와 분리해서 판단합니다.
+
+    Args:
+        audio_path: STT word match 확인에 사용할 녹음 경로. target_word와 함께 전달해야 동작한다.
+        target_word: 사용자가 발음해야 할 단어. word_mismatch 감지에 사용한다.
+    """
     duration_ms = _get_float_value(features, "duration_ms")
     rms_mean = _get_float_value(features, "rms_mean")
     zcr_mean = _get_float_value(features, "zcr_mean")
@@ -89,6 +141,12 @@ def evaluate_recording_quality(
     issue_flags.extend(_has_bad_volume(rms_mean))
     issue_flags.extend(_has_bad_noise(zcr_mean, rms_mean))
 
-    if issue_flags:
-        return {"status": "bad", "issue_flags": issue_flags}
-    return {"status": "ok", "issue_flags": []}
+    word_match: bool | None = None
+    if audio_path and target_word:
+        word_match = check_word_match(audio_path, target_word)
+        if not word_match:
+            issue_flags.append("word_mismatch")
+
+    audio_quality_flags = [f for f in issue_flags if f != "word_mismatch"]
+    status: QualityStatus = "bad" if audio_quality_flags else "ok"
+    return {"status": status, "issue_flags": issue_flags, "word_match": word_match}

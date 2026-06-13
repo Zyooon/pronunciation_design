@@ -5,8 +5,9 @@ from typing import Any, Generator
 
 import gradio as gr
 
-from pipeline.audio import load_and_trim_audio
+from pipeline.audio import load_trimmed_audio
 from pipeline.features import extract_features
+from pipeline.quality import evaluate_recording_quality
 from pipeline.reference import (
     build_target_index,
     get_available_targets,
@@ -361,6 +362,15 @@ footer { display: none !important; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-text { font-size: 15px; color: #64748b; font-weight: 500; }
 
+/* ── Word mismatch warning ──────────────────── */
+.word-mismatch-warning {
+  background: #fef3c7; border: 1px solid #fcd34d; border-radius: 14px;
+  padding: 14px 18px; margin: 12px 16px 0;
+  display: flex; align-items: flex-start; gap: 10px;
+}
+.wm-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+.wm-text { font-size: 13.5px; color: #92400e; font-weight: 500; line-height: 1.6; }
+
 /* ── Mobile ─────────────────────────────────── */
 @media (max-width: 480px) {
   .app-shell { padding: 0 0 60px !important; }
@@ -452,7 +462,7 @@ def render_practice_header(target_id: str | None) -> str:
     """
 
 
-def render_result_content(target: Any, result: dict[str, Any]) -> str:
+def render_result_content(target: Any, result: dict[str, Any], word_match: bool | None = None) -> str:
     score    = float(result["score"])
     feedback = result["feedback"]
     details  = result.get("details", {})
@@ -481,11 +491,22 @@ def render_result_content(target: Any, result: dict[str, Any]) -> str:
         if details.get(k) not in ("", None)
     )
 
+    word_mismatch_html = ""
+    if word_match is False:
+        word_mismatch_html = (
+            f'<div class="word-mismatch-warning">'
+            f'<span class="wm-icon">⚠️</span>'
+            f'<span class="wm-text">다른 단어가 감지됐습니다. '
+            f'<strong>\'{target.word}\'</strong>를 발음해 주세요.</span>'
+            f'</div>'
+        )
+
     return f"""
     <div class="result-target">
       <div class="result-word">{target.word}</div>
       <div class="result-phoneme-pill">/{target.phoneme}/</div>
     </div>
+    {word_mismatch_html}
     <div class="score-card">
       <div class="score-lbl">Pronunciation Score</div>
       <div><span class="score-num">{score:.0f}</span><span class="score-max"> / 100</span></div>
@@ -564,8 +585,14 @@ def analyze_pronunciation(
             target_index=TARGET_INDEX,
             reference_vectors=REFERENCE_VECTORS,
         )
-        y, sr = load_and_trim_audio(audio_file)
+        y, sr = load_trimmed_audio(audio_file)
         features = extract_features(y, sr)
+        quality_result = evaluate_recording_quality(
+            features=features,
+            reference=reference,
+            audio_path=audio_file,
+            target_word=target.word,
+        )
         result = score_pronunciation(
             user_features=features,
             reference=reference,
@@ -580,7 +607,7 @@ def analyze_pronunciation(
         yield (
             gr.update(visible=False),
             gr.update(visible=True),
-            render_result_content(target, result),
+            render_result_content(target, result, word_match=quality_result["word_match"]),
             "",
         )
 
