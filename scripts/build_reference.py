@@ -180,7 +180,7 @@ def build_reference_vectors(
 
                 # 디버깅과 추적을 위해 어떤 파일에서 온 샘플인지 남겨둡니다.
                 features["word"] = word
-                features["source_file"] = str(audio_path.relative_to(PROJECT_ROOT))
+                features["source_file"] = str(audio_path.resolve().relative_to(PROJECT_ROOT.resolve()))
 
                 grouped_samples[phoneme].append(features)
                 test_words_by_phoneme[phoneme].add(word)
