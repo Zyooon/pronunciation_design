@@ -22,6 +22,12 @@ _DURATION_LOW_THRESHOLD = 45.0
 _CENTROID_LOW_THRESHOLD = 45.0
 _VOWEL_MFCC_DOUBLE      = 60.0
 
+_KO_RELATIVE_PENALTY_START = 58.0
+_KO_RELATIVE_PENALTY_STRONG = 50.0
+_KO_RELATIVE_PENALTY_SEVERE = 45.0
+_KO_RELATIVE_PENALTY_MULTIPLIER = 0.90
+_KO_RELATIVE_PENALTY_MAX = 26.0
+
 
 class ScoreResult(TypedDict):
     score: float
@@ -78,8 +84,15 @@ def compute_ko_reference_metrics(
         return {}
 
     relative_distance_score = ko_distance / (en_distance + ko_distance + EPSILON) * 100
-    korean_like_penalty = max(0.0, 55.0 - relative_distance_score) * 0.45
-    korean_like_penalty = float(np.clip(korean_like_penalty, 0.0, 18.0))
+    korean_like_penalty = max(
+        0.0,
+        (_KO_RELATIVE_PENALTY_START - relative_distance_score) * _KO_RELATIVE_PENALTY_MULTIPLIER,
+    )
+    if relative_distance_score < _KO_RELATIVE_PENALTY_STRONG:
+        korean_like_penalty += 3.0
+    if relative_distance_score < _KO_RELATIVE_PENALTY_SEVERE:
+        korean_like_penalty += 5.0
+    korean_like_penalty = float(np.clip(korean_like_penalty, 0.0, _KO_RELATIVE_PENALTY_MAX))
 
     return {
         "en_distance": round(en_distance, 4),
