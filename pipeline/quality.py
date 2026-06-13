@@ -11,10 +11,11 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-AudioFeatureValue = float | list[float] | str | list[str] | bool | None
+AudioFeatureValue = float | list[float] | str | list[str] | bool | dict[str, str | None] | None
 AudioFeatures = dict[str, AudioFeatureValue]
 ReferenceVector = dict[str, float | list[float] | str]
 QualityStatus = Literal["ok", "bad"]
+SttStatus = Literal["matched", "mismatched", "uncertain", "unavailable"]
 
 EPSILON = 1e-8
 
@@ -35,15 +36,25 @@ _SHORT_WORD_MAX_LEN = 4
 _whisper_model: WhisperModel | None = None
 
 
+class WordMatchResult(TypedDict):
+    word_match: bool | None
+    stt_status: SttStatus
+    transcript: str | None
+    prompted_transcript: str | None
+
+
 class RecordingQualityResult(TypedDict):
     status: QualityStatus
     issue_flags: list[str]
     word_match: bool | None
+    stt_status: SttStatus
+    transcript: str | None
+    prompted_transcript: str | None
 
 
 def _get_float_value(values: AudioFeatures | ReferenceVector, key: str) -> float | None:
     value = values.get(key)
-    if value is None or isinstance(value, list):
+    if value is None or isinstance(value, list) or isinstance(value, dict):
         return None
     try:
         return float(value)
@@ -93,38 +104,82 @@ def _is_confident_other_word(target_word: str, transcript_tokens: list[str]) -> 
     return similarity < _CONFIDENT_OTHER_WORD_THRESHOLD
 
 
-def check_word_match(audio_path: str, target_word: str) -> bool | None:
-    """STT로 목표 단어 일치 여부를 확인한다.
+def _transcribe_audio(audio_path: str, target_word: str | None = None) -> str:
+    model = _load_whisper_model()
+    kwargs: dict[str, str | int] = {
+        "language": "en",
+        "beam_size": 1,
+    }
+    if target_word:
+        kwargs["initial_prompt"] = target_word
+    segments, _ = model.transcribe(audio_path, **kwargs)
+    return " ".join(segment.text for segment in segments).strip()
 
-    STT는 짧은 단어에서 불안정하므로 확실한 경우만 True/False를 반환한다.
-    애매하거나 비어 있는 결과는 None으로 두고 발음 채점을 계속 진행한다.
+
+def _judge_transcript(transcript: str, normalized_target: str) -> bool | None:
+    normalized_transcript = _normalize_text(transcript)
+    if not normalized_transcript:
+        return None
+
+    transcript_tokens = normalized_transcript.split()
+    if _has_exact_token_match(normalized_target, transcript_tokens):
+        return True
+    if _has_fuzzy_token_match(normalized_target, transcript_tokens):
+        return True
+    if _is_confident_other_word(normalized_target, transcript_tokens):
+        return False
+    return None
+
+
+def check_word_match_detail(audio_path: str, target_word: str) -> WordMatchResult:
+    """STT 2-pass 방식으로 목표 단어 일치 여부를 확인한다.
+
+    1차는 prompt 없이 판단해서 wrong word 차단력을 유지한다.
+    1차가 애매할 때만 target_word prompt를 넣어 단음절 false negative를 완화한다.
     """
     normalized_target = _normalize_text(target_word).replace(" ", "")
     if not normalized_target:
-        return None
+        return {
+            "word_match": None,
+            "stt_status": "unavailable",
+            "transcript": None,
+            "prompted_transcript": None,
+        }
 
     try:
-        model = _load_whisper_model()
-        segments, _ = model.transcribe(
-            audio_path,
-            language="en",
-            beam_size=1,
-            initial_prompt=target_word,
-        )
-        transcribed = " ".join(segment.text for segment in segments)
-        normalized_transcript = _normalize_text(transcribed)
-        if not normalized_transcript:
-            return None
+        transcript = _transcribe_audio(audio_path)
+        first_pass_match = _judge_transcript(transcript, normalized_target)
+        if first_pass_match is True:
+            return {
+                "word_match": True,
+                "stt_status": "matched",
+                "transcript": transcript,
+                "prompted_transcript": None,
+            }
+        if first_pass_match is False:
+            return {
+                "word_match": False,
+                "stt_status": "mismatched",
+                "transcript": transcript,
+                "prompted_transcript": None,
+            }
 
-        transcript_tokens = normalized_transcript.split()
-        if _has_exact_token_match(normalized_target, transcript_tokens):
-            return True
-        if _has_fuzzy_token_match(normalized_target, transcript_tokens):
-            return True
-        if _is_confident_other_word(normalized_target, transcript_tokens):
-            return False
+        prompted_transcript = _transcribe_audio(audio_path, target_word=target_word)
+        prompted_match = _judge_transcript(prompted_transcript, normalized_target)
+        if prompted_match is True:
+            return {
+                "word_match": True,
+                "stt_status": "matched",
+                "transcript": transcript,
+                "prompted_transcript": prompted_transcript,
+            }
 
-        return None
+        return {
+            "word_match": None,
+            "stt_status": "uncertain",
+            "transcript": transcript,
+            "prompted_transcript": prompted_transcript,
+        }
     except Exception:
         log.warning(
             "STT word match 확인 실패 (fail open): audio_path=%s, target_word=%s",
@@ -132,7 +187,17 @@ def check_word_match(audio_path: str, target_word: str) -> bool | None:
             target_word,
             exc_info=True,
         )
-        return None
+        return {
+            "word_match": None,
+            "stt_status": "unavailable",
+            "transcript": None,
+            "prompted_transcript": None,
+        }
+
+
+def check_word_match(audio_path: str, target_word: str) -> bool | None:
+    """기존 호출부 호환을 위해 word_match 값만 반환한다."""
+    return check_word_match_detail(audio_path, target_word)["word_match"]
 
 
 def _has_bad_duration(duration_ms: float, reference_duration_ms: float | None) -> list[str]:
@@ -180,6 +245,9 @@ def _attach_quality_result_to_features(features: AudioFeatures, quality_result: 
     features["recording_quality_status"] = quality_result["status"]
     features["issue_flags"] = quality_result["issue_flags"]
     features["word_match"] = quality_result["word_match"]
+    features["stt_status"] = quality_result["stt_status"]
+    features["transcript"] = quality_result["transcript"]
+    features["prompted_transcript"] = quality_result["prompted_transcript"]
 
 
 def evaluate_recording_quality(
@@ -205,17 +273,25 @@ def evaluate_recording_quality(
     issue_flags.extend(_has_bad_volume(rms_mean))
     issue_flags.extend(_has_bad_noise(zcr_mean, rms_mean))
 
-    word_match: bool | None = None
+    word_match_result: WordMatchResult = {
+        "word_match": None,
+        "stt_status": "unavailable",
+        "transcript": None,
+        "prompted_transcript": None,
+    }
     if audio_path and target_word:
-        word_match = check_word_match(audio_path, target_word)
-        if word_match is False:
+        word_match_result = check_word_match_detail(audio_path, target_word)
+        if word_match_result["word_match"] is False:
             issue_flags.append("word_mismatch")
 
     status: QualityStatus = "bad" if issue_flags else "ok"
     quality_result: RecordingQualityResult = {
         "status": status,
         "issue_flags": issue_flags,
-        "word_match": word_match,
+        "word_match": word_match_result["word_match"],
+        "stt_status": word_match_result["stt_status"],
+        "transcript": word_match_result["transcript"],
+        "prompted_transcript": word_match_result["prompted_transcript"],
     }
     _attach_quality_result_to_features(features, quality_result)
     return quality_result
