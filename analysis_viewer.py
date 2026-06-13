@@ -151,6 +151,11 @@ def load_user_results_csv(path: Path) -> list[dict[str, str]]:
 
 # ── 데이터 빌더 ──────────────────────────────────────────────────────────────
 
+def is_success_row(row: dict[str, Any]) -> bool:
+    """comparison result row가 성공 상태인지 판별한다."""
+    return row.get("status", "ok") in {"ok", "success"}
+
+
 def build_overview_summary(
     reference_vectors: dict[str, Any],
     comparison_results: dict[str, Any],
@@ -158,7 +163,7 @@ def build_overview_summary(
 ) -> dict[str, Any]:
     """전체 요약 dict를 빌드한다."""
     results = comparison_results.get("results", [])
-    successful_results = [r for r in results if r.get("status") == "success"]
+    successful_results = [r for r in results if is_success_row(r)]
     error_results      = [r for r in results if r.get("status") == "error"]
 
     phoneme_count_ref    = len(reference_vectors)
@@ -220,7 +225,7 @@ def build_phoneme_analysis_rows(
     """음소별 비교 분석 행 목록을 빌드한다."""
     successful_results = [
         r for r in comparison_results.get("results", [])
-        if r.get("status") == "success"
+        if is_success_row(r)
     ]
 
     if not successful_results:
@@ -244,7 +249,7 @@ def build_phoneme_analysis_rows(
 def build_word_result_rows(comparison_results: dict[str, Any]) -> list[dict[str, Any]]:
     """단어별 성공 comparison 행 목록을 빌드한다."""
     results = comparison_results.get("results", [])
-    successful = [r for r in results if r.get("status") == "success"]
+    successful = [r for r in results if is_success_row(r)]
 
     return [
         {
@@ -254,8 +259,14 @@ def build_word_result_rows(comparison_results: dict[str, Any]) -> list[dict[str,
             "en_duration_ms":                 _round_or_none(r.get("en_duration_ms")),
             "ko_duration_ms":                 _round_or_none(r.get("ko_duration_ms")),
             "duration_ko_en_ratio":           _round_or_none(r.get("duration_ko_en_ratio")),
+            "en_zcr_mean":                    _round_or_none(r.get("en_zcr_mean"), ndigits=6),
+            "ko_zcr_mean":                    _round_or_none(r.get("ko_zcr_mean"), ndigits=6),
             "zcr_ko_en_ratio":                _round_or_none(r.get("zcr_ko_en_ratio")),
+            "en_rms_mean":                    _round_or_none(r.get("en_rms_mean"), ndigits=6),
+            "ko_rms_mean":                    _round_or_none(r.get("ko_rms_mean"), ndigits=6),
             "rms_ko_en_ratio":                _round_or_none(r.get("rms_ko_en_ratio")),
+            "en_spectral_centroid_mean":      _round_or_none(r.get("en_spectral_centroid_mean")),
+            "ko_spectral_centroid_mean":      _round_or_none(r.get("ko_spectral_centroid_mean")),
             "spectral_centroid_ko_en_ratio":  _round_or_none(r.get("spectral_centroid_ko_en_ratio")),
             "mfcc_distance":                  _round_or_none(r.get("mfcc_distance")),
             "mfcc_cosine_distance":           _round_or_none(r.get("mfcc_cosine_distance"), ndigits=4),
@@ -271,22 +282,26 @@ def build_outlier_rows(analysis_report: dict[str, Any] | None) -> list[dict[str,
     if not analysis_report:
         return []
 
-    outliers = analysis_report.get("outliers", [])
-    if not outliers:
+    phoneme_reports = analysis_report.get("phonemes", {})
+    if not isinstance(phoneme_reports, dict):
         return []
 
-    return [
-        {
-            "word":        o.get("word", ""),
-            "phoneme":     o.get("phoneme", ""),
-            "metric_name": o.get("metric_name", ""),
-            "value":       _round_or_none(o.get("value")),
-            "average":     _round_or_none(o.get("average")),
-            "stdev":       _round_or_none(o.get("stdev")),
-            "z_score":     _round_or_none(o.get("z_score"), ndigits=3),
-        }
-        for o in outliers
-    ]
+    rows = []
+    for phoneme, report in phoneme_reports.items():
+        if not isinstance(report, dict):
+            continue
+        for outlier in report.get("outliers", []):
+            rows.append({
+                "word":        outlier.get("word", ""),
+                "phoneme":     outlier.get("phoneme", phoneme),
+                "metric_name": outlier.get("metric_name", ""),
+                "value":       _round_or_none(outlier.get("value")),
+                "average":     _round_or_none(outlier.get("average")),
+                "stdev":       _round_or_none(outlier.get("stdev")),
+                "z_score":     _round_or_none(outlier.get("z_score"), ndigits=3),
+            })
+
+    return sorted(rows, key=lambda r: abs(r.get("z_score") or 0), reverse=True)
 
 
 def build_error_rows(comparison_results: dict[str, Any]) -> list[dict[str, Any]]:
@@ -330,8 +345,14 @@ def _compute_quality_warnings(
 def _count_outliers_from_report(analysis_report: dict[str, Any] | None) -> int:
     if not analysis_report:
         return 0
-    outliers = analysis_report.get("outliers", [])
-    return len(outliers)
+    phoneme_reports = analysis_report.get("phonemes", {})
+    if not isinstance(phoneme_reports, dict):
+        return 0
+    return sum(
+        len(report.get("outliers", []))
+        for report in phoneme_reports.values()
+        if isinstance(report, dict)
+    )
 
 
 def _index_report_by_phoneme(
@@ -339,10 +360,16 @@ def _index_report_by_phoneme(
 ) -> dict[str, dict[str, Any]]:
     if not analysis_report:
         return {}
-    phoneme_data = analysis_report.get("phoneme_analysis", {})
-    if not isinstance(phoneme_data, dict):
-        return {}
-    return phoneme_data
+
+    phoneme_data = analysis_report.get("phonemes")
+    if isinstance(phoneme_data, dict):
+        return phoneme_data
+
+    legacy_data = analysis_report.get("phoneme_analysis")
+    if isinstance(legacy_data, dict):
+        return legacy_data
+
+    return {}
 
 
 def _build_single_phoneme_analysis(

@@ -302,16 +302,16 @@ function onWordRowClick(tr) {
   const panel = document.getElementById("word-detail-panel");
 
   const metrics = [
-    { name: "Duration",          en: r.en_duration_ms,   ko: r.ko_duration_ms,   ratio: r.duration_ko_en_ratio,           unit: "ms" },
-    { name: "ZCR",               en: null,               ko: null,               ratio: r.zcr_ko_en_ratio,                unit: "" },
-    { name: "RMS",               en: null,               ko: null,               ratio: r.rms_ko_en_ratio,                unit: "" },
-    { name: "Spectral Centroid", en: null,               ko: null,               ratio: r.spectral_centroid_ko_en_ratio,  unit: "" },
+    { name: "Duration",          en: r.en_duration_ms,              ko: r.ko_duration_ms,              ratio: r.duration_ko_en_ratio,           unit: "ms" },
+    { name: "ZCR",               en: r.en_zcr_mean,                 ko: r.ko_zcr_mean,                 ratio: r.zcr_ko_en_ratio,                unit: "" },
+    { name: "RMS",               en: r.en_rms_mean,                 ko: r.ko_rms_mean,                 ratio: r.rms_ko_en_ratio,                unit: "" },
+    { name: "Spectral Centroid", en: r.en_spectral_centroid_mean,   ko: r.ko_spectral_centroid_mean,   ratio: r.spectral_centroid_ko_en_ratio,  unit: "Hz" },
   ];
 
-  const metricHtml = metrics.map(({ name, en, ko, ratio }) => {
+  const metricHtml = metrics.map(({ name, en, ko, ratio, unit }) => {
     const ratioStr = ratio !== null && ratio !== undefined ? `${ratio}x` : "—";
-    const enStr = en !== null && en !== undefined ? en : "—";
-    const koStr = ko !== null && ko !== undefined ? ko : "—";
+    const enStr = en !== null && en !== undefined ? `${en}${unit ? unit : ""}` : "—";
+    const koStr = ko !== null && ko !== undefined ? `${ko}${unit ? unit : ""}` : "—";
     const hasEnKo = en !== null && en !== undefined;
 
     return `
