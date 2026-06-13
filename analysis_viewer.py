@@ -96,9 +96,9 @@ async def get_errors() -> Response:
 
 @app.get("/api/user-results")
 async def get_user_results() -> Response:
-    """results.csv 내용을 JSON으로 반환한다. 파일이 없으면 빈 배열."""
-    rows = load_user_results_csv(RESULTS_CSV_PATH)
-    return _json_response(rows)
+    """results.csv 상태와 내용을 JSON으로 반환한다."""
+    payload = load_user_results_csv(RESULTS_CSV_PATH)
+    return _json_response(payload)
 
 
 # ── 파일 로딩 ────────────────────────────────────────────────────────────────
@@ -135,18 +135,54 @@ def load_analysis_report(path: Path) -> dict[str, Any] | None:
     return data if data else None
 
 
-def load_user_results_csv(path: Path) -> list[dict[str, str]]:
-    """results.csv를 읽어 row 목록을 반환한다. 파일이 없으면 빈 리스트."""
+def load_user_results_csv(path: Path) -> dict[str, Any]:
+    """results.csv 상태와 row 목록을 반환한다."""
+    result: dict[str, Any] = {
+        "exists": path.exists(),
+        "path": str(path),
+        "row_count": 0,
+        "columns": [],
+        "rows": [],
+        "error": None,
+    }
+
     if not path.exists():
-        return []
+        return result
 
     try:
-        with path.open("r", encoding="utf-8", newline="") as f:
+        raw = path.read_text(encoding="utf-8-sig")
+        non_empty_lines = [l for l in raw.splitlines() if l.strip()]
+
+        if not non_empty_lines:
+            result["error"] = "CSV 파일이 비어 있습니다."
+            return result
+
+        if len(non_empty_lines) == 1:
+            result["error"] = (
+                "CSV 파일에 줄바꿈이 없습니다. "
+                "헤더와 데이터가 한 줄로 합쳐진 손상된 파일입니다. "
+                "파일을 삭제하면 다음 녹음 시 자동으로 재생성됩니다."
+            )
+            return result
+
+        with path.open("r", encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
-            return [row for row in reader]
+            columns = list(reader.fieldnames or [])
+            rows = [row for row in reader]
+
+        result["columns"] = columns
+        result["rows"] = rows
+        result["row_count"] = len(rows)
+
+        if not columns:
+            result["error"] = "CSV header가 없습니다."
+
+        return result
+
     except Exception as e:
         log.error("CSV 읽기 실패: path=%s, error=%s", path, e)
-        return []
+        result["error"] = str(e)
+        return result
 
 
 # ── 데이터 빌더 ──────────────────────────────────────────────────────────────

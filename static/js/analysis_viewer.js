@@ -410,24 +410,54 @@ function renderErrorTable(rows) {
 // ── User Results ──────────────────────────────────────────────────────────────
 async function loadUserResults() {
   const wrap = document.getElementById("user-results-wrap");
-  try {
-    const rows = await fetchJson("/api/user-results");
 
-    if (!rows.length) {
+  try {
+    const data = await fetchJson("/api/user-results");
+
+    if (!data.exists) {
       wrap.innerHTML = `
         <div class="no-data-msg">
-          results.csv 파일이 없거나 비어 있습니다.<br/>실제 사용자 테스트 결과가 생성된 뒤 확인하세요.
+          data/results.csv 파일이 없습니다.<br/>
+          실제 녹음 후 결과 저장이 되는지 확인하세요.
         </div>`;
       return;
     }
 
-    const columns = Object.keys(rows[0]);
+    if (data.error) {
+      wrap.innerHTML = `
+        <div class="no-data-msg">
+          results.csv 읽기 오류: ${escHtml(data.error)}<br/>
+          path: ${escHtml(data.path)}
+        </div>`;
+      return;
+    }
+
+    if (!data.rows || data.rows.length === 0) {
+      wrap.innerHTML = `
+        <div class="no-data-msg">
+          results.csv 파일은 있지만 저장된 row가 없습니다.<br/>
+          path: ${escHtml(data.path)}
+        </div>`;
+      return;
+    }
+
+    const columns = data.columns && data.columns.length
+      ? data.columns
+      : Object.keys(data.rows[0]);
+
     const theadHtml = columns.map((c) => `<th>${escHtml(c)}</th>`).join("");
-    const tbodyHtml = rows.map((r) =>
+    const tbodyHtml = data.rows.map((r) =>
       `<tr>${columns.map((c) => `<td>${escHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
     ).join("");
 
     wrap.innerHTML = `
+      <div class="meta-box">
+        <strong>path:</strong> ${escHtml(data.path)}
+        &nbsp;·&nbsp;
+        <strong>rows:</strong> ${data.row_count}
+        &nbsp;·&nbsp;
+        <strong>columns:</strong> ${columns.length}
+      </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr>${theadHtml}</tr></thead>
