@@ -22,13 +22,13 @@ _DURATION_LOW_THRESHOLD = 45.0
 _CENTROID_LOW_THRESHOLD = 45.0
 _VOWEL_MFCC_DOUBLE      = 60.0
 
-_KO_RELATIVE_PENALTY_START = 58.0
-_KO_RELATIVE_PENALTY_STRONG = 50.0
-_KO_RELATIVE_PENALTY_SEVERE = 45.0
-_KO_RELATIVE_PENALTY_MULTIPLIER = 0.90
-_KO_RELATIVE_PENALTY_MAX = 26.0
+_KO_RELATIVE_PENALTY_START = 50.0
+_KO_RELATIVE_PENALTY_STRONG = 45.0
+_KO_RELATIVE_PENALTY_SEVERE = 40.0
+_KO_RELATIVE_PENALTY_MULTIPLIER = 0.60
+_KO_RELATIVE_PENALTY_MAX = 15.0
 
-_MISMATCH_BASE_SCORE_START = 75.0
+_MISMATCH_BASE_SCORE_START = 80.0
 _MISMATCH_BASE_SCORE_STRONG = 82.0
 _MISMATCH_RELATIVE_SCORE_START = 50.0
 _MISMATCH_RELATIVE_SCORE_STRONG = 47.0
@@ -116,12 +116,15 @@ def compute_mismatch_penalty(base_score: float, ko_metrics: dict[str, float]) ->
         return 0.0
 
     penalty = 0.0
+
     if relative_score < _MISMATCH_RELATIVE_SCORE_START:
-        penalty += (_MISMATCH_RELATIVE_SCORE_START - relative_score) * 0.45
+        penalty += (_MISMATCH_RELATIVE_SCORE_START - relative_score) * 0.8
+
     if base_score >= _MISMATCH_BASE_SCORE_STRONG and relative_score < _MISMATCH_RELATIVE_SCORE_STRONG:
-        penalty += 4.0
-    if relative_score < _MISMATCH_RELATIVE_SCORE_SEVERE:
-        penalty += 4.0
+        penalty += 3.0
+
+    if base_score >= _MISMATCH_BASE_SCORE_STRONG and relative_score < _MISMATCH_RELATIVE_SCORE_SEVERE:
+        penalty += 5.0
 
     return round(float(np.clip(penalty, 0.0, _MISMATCH_PENALTY_MAX)), 1)
 
