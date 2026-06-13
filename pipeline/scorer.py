@@ -13,44 +13,22 @@ ScoreDetailValue = float | str | list[str] | bool | None
 
 _LIQUID_PHONEMES: frozenset[str] = frozenset({"r", "l"})
 _DURATION_FOCUSED_PHONEMES: frozenset[str] = frozenset({"i", "iː"})
-_SEQUENCE_MFCC_KEYS: tuple[str, ...] = (
-    "mfcc_start_mean",
-    "mfcc_middle_mean",
-    "mfcc_end_mean",
-    "delta_mfcc_mean",
-)
-
-_MIN_DURATION_MS = 150.0
-_RMS_SILENT = 0.005
-_RMS_VERY_QUIET = 0.015
-_ZCR_ACTIVE_NOISE = 0.35
-_RMS_LOW_FOR_ZCR_CHECK = 0.020
-_ZCR_EXTREME = 0.50
+_KO_REFERENCE_PHONEMES: frozenset[str] = frozenset({"θ", "v", "æ", "f"})
 
 _MFCC_LOW_THRESHOLD = 55.0
 _DURATION_LOW_THRESHOLD = 45.0
 _CENTROID_LOW_THRESHOLD = 45.0
-_VOWEL_MFCC_DOUBLE = 60.0
-_SEQUENCE_LOW_THRESHOLD = 50.0
+_ZCR_LOW_THRESHOLD = 45.0
 
 _KO_RELATIVE_PENALTY_START = 50.0
 _KO_RELATIVE_PENALTY_STRONG = 45.0
-_KO_RELATIVE_PENALTY_SEVERE = 40.0
-_KO_RELATIVE_PENALTY_MULTIPLIER = 0.60
-_KO_RELATIVE_PENALTY_MAX = 15.0
+_KO_RELATIVE_PENALTY_MULTIPLIER = 0.55
+_KO_RELATIVE_PENALTY_MAX = 12.0
 
-_MISMATCH_BASE_SCORE_START = 80.0
-_MISMATCH_BASE_SCORE_STRONG = 82.0
-_MISMATCH_RELATIVE_SCORE_START = 50.0
-_MISMATCH_RELATIVE_SCORE_STRONG = 47.0
-_MISMATCH_RELATIVE_SCORE_SEVERE = 44.0
-_MISMATCH_PENALTY_MAX = 14.0
-
-_LIQUID_ALT_SCORE_START = 52.0
-_LIQUID_ALT_SCORE_STRONG = 47.0
-_LIQUID_ALT_SCORE_SEVERE = 42.0
-_LIQUID_ALT_PENALTY_MULTIPLIER = 0.70
-_LIQUID_ALT_PENALTY_MAX = 14.0
+_LIQUID_ALT_SCORE_START = 50.0
+_LIQUID_ALT_SCORE_STRONG = 44.0
+_LIQUID_ALT_PENALTY_MULTIPLIER = 0.45
+_LIQUID_ALT_PENALTY_MAX = 8.0
 
 _QUALITY_GATE_FEEDBACK = "녹음 품질이 낮아 발음 점수를 신뢰하기 어렵습니다. 다시 녹음해주세요."
 _WORD_MISMATCH_FEEDBACK = "녹음된 단어가 목표 단어와 달라 발음 점수를 신뢰하기 어렵습니다. 목표 단어를 다시 녹음해주세요."
@@ -103,18 +81,8 @@ def _mfcc_distance(user_features: AudioFeatures, reference: ReferenceVector | No
         return None
 
 
-def compute_sequence_mfcc_score(user_features: AudioFeatures, reference: ReferenceVector) -> float | None:
-    scores: list[float] = []
-    for key in _SEQUENCE_MFCC_KEYS:
-        user_value = user_features.get(key)
-        ref_mean = reference.get(key)
-        ref_std = reference.get(f"{key}_std")
-        if user_value is None or ref_mean is None or ref_std is None:
-            continue
-        scores.append(z_score_distance_score(user_value, ref_mean, ref_std, scale=8.0))
-    if not scores:
-        return None
-    return round(float(np.mean(scores)), 1)
+def _round_sub_scores(**values: float) -> dict[str, float]:
+    return {key: round(float(value), 1) for key, value in values.items()}
 
 
 def compute_ko_reference_metrics(
@@ -133,9 +101,7 @@ def compute_ko_reference_metrics(
         (_KO_RELATIVE_PENALTY_START - relative_distance_score) * _KO_RELATIVE_PENALTY_MULTIPLIER,
     )
     if relative_distance_score < _KO_RELATIVE_PENALTY_STRONG:
-        korean_like_penalty += 3.0
-    if relative_distance_score < _KO_RELATIVE_PENALTY_SEVERE:
-        korean_like_penalty += 5.0
+        korean_like_penalty += 2.0
     korean_like_penalty = float(np.clip(korean_like_penalty, 0.0, _KO_RELATIVE_PENALTY_MAX))
 
     return {
@@ -144,21 +110,6 @@ def compute_ko_reference_metrics(
         "relative_distance_score": round(float(relative_distance_score), 1),
         "korean_like_penalty": round(korean_like_penalty, 1),
     }
-
-
-def compute_mismatch_penalty(base_score: float, ko_metrics: dict[str, float]) -> float:
-    relative_score = ko_metrics.get("relative_distance_score")
-    if relative_score is None or base_score < _MISMATCH_BASE_SCORE_START:
-        return 0.0
-
-    penalty = 0.0
-    if relative_score < _MISMATCH_RELATIVE_SCORE_START:
-        penalty += (_MISMATCH_RELATIVE_SCORE_START - relative_score) * 0.8
-    if base_score >= _MISMATCH_BASE_SCORE_STRONG and relative_score < _MISMATCH_RELATIVE_SCORE_STRONG:
-        penalty += 3.0
-    if base_score >= _MISMATCH_BASE_SCORE_STRONG and relative_score < _MISMATCH_RELATIVE_SCORE_SEVERE:
-        penalty += 5.0
-    return round(float(np.clip(penalty, 0.0, _MISMATCH_PENALTY_MAX)), 1)
 
 
 def compute_liquid_alt_metrics(
@@ -177,9 +128,7 @@ def compute_liquid_alt_metrics(
         (_LIQUID_ALT_SCORE_START - alt_relative_score) * _LIQUID_ALT_PENALTY_MULTIPLIER,
     )
     if alt_relative_score < _LIQUID_ALT_SCORE_STRONG:
-        liquid_alt_penalty += 3.0
-    if alt_relative_score < _LIQUID_ALT_SCORE_SEVERE:
-        liquid_alt_penalty += 5.0
+        liquid_alt_penalty += 2.0
     liquid_alt_penalty = float(np.clip(liquid_alt_penalty, 0.0, _LIQUID_ALT_PENALTY_MAX))
 
     return {
@@ -190,151 +139,84 @@ def compute_liquid_alt_metrics(
     }
 
 
-def _round_sub_scores(**values: float) -> dict[str, float]:
-    return {key: round(float(value), 1) for key, value in values.items()}
-
-
-def _attach_sequence_score(result: dict[str, float], sequence_score: float | None) -> dict[str, float]:
-    if sequence_score is not None:
-        result["sequence_mfcc_score"] = round(float(sequence_score), 1)
-    return result
-
-
 def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
-    sequence_score = compute_sequence_mfcc_score(user_features, reference)
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     rms_score = ratio_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
+    final_score = mfcc_score * 0.70 + duration_score * 0.15 + centroid_score * 0.10 + rms_score * 0.05
 
-    if sequence_score is None:
-        final_score = mfcc_score * 0.70 + duration_score * 0.15 + centroid_score * 0.10 + rms_score * 0.05
-    else:
-        final_score = mfcc_score * 0.50 + sequence_score * 0.20 + duration_score * 0.15 + centroid_score * 0.10 + rms_score * 0.05
-
-    result = _round_sub_scores(
+    return _round_sub_scores(
         score=final_score,
         mfcc_score=mfcc_score,
         duration_score=duration_score,
         spectral_centroid_score=centroid_score,
         rms_score=rms_score,
     )
-    return _attach_sequence_score(result, sequence_score)
 
 
 def score_duration_focused_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
-    sequence_score = compute_sequence_mfcc_score(user_features, reference)
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     rms_score = ratio_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
+    final_score = mfcc_score * 0.50 + duration_score * 0.35 + centroid_score * 0.10 + rms_score * 0.05
 
-    if sequence_score is None:
-        final_score = mfcc_score * 0.50 + duration_score * 0.35 + centroid_score * 0.10 + rms_score * 0.05
-    else:
-        final_score = mfcc_score * 0.40 + sequence_score * 0.15 + duration_score * 0.35 + centroid_score * 0.05 + rms_score * 0.05
-
-    result = _round_sub_scores(
+    return _round_sub_scores(
         score=final_score,
         mfcc_score=mfcc_score,
         duration_score=duration_score,
         spectral_centroid_score=centroid_score,
         rms_score=rms_score,
     )
-    return _attach_sequence_score(result, sequence_score)
 
 
 def score_consonant(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
-    sequence_score = compute_sequence_mfcc_score(user_features, reference)
     zcr_score = ratio_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
+    final_score = mfcc_score * 0.55 + zcr_score * 0.35 + centroid_score * 0.10
 
-    if sequence_score is None:
-        final_score = mfcc_score * 0.55 + zcr_score * 0.35 + centroid_score * 0.10
-    else:
-        final_score = mfcc_score * 0.45 + sequence_score * 0.15 + zcr_score * 0.30 + centroid_score * 0.10
-
-    result = _round_sub_scores(
+    return _round_sub_scores(
         score=final_score,
         mfcc_score=mfcc_score,
         zcr_score=zcr_score,
         spectral_centroid_score=centroid_score,
     )
-    return _attach_sequence_score(result, sequence_score)
 
 
 def score_liquid(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
-    sequence_score = compute_sequence_mfcc_score(user_features, reference)
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     zcr_score = ratio_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
+    final_score = mfcc_score * 0.70 + duration_score * 0.15 + centroid_score * 0.10 + zcr_score * 0.05
 
-    if sequence_score is None:
-        final_score = mfcc_score * 0.75 + duration_score * 0.15 + centroid_score * 0.10
-    else:
-        final_score = mfcc_score * 0.55 + sequence_score * 0.20 + duration_score * 0.15 + centroid_score * 0.10
-
-    result = _round_sub_scores(
+    return _round_sub_scores(
         score=final_score,
         mfcc_score=mfcc_score,
         duration_score=duration_score,
         spectral_centroid_score=centroid_score,
         zcr_score=zcr_score,
     )
-    return _attach_sequence_score(result, sequence_score)
-
-
-def compute_quality_penalty(duration_ms: float, rms_mean: float, zcr_mean: float, ref_duration_ms: float) -> tuple[float, float, float]:
-    if duration_ms < _MIN_DURATION_MS:
-        duration_penalty = 30.0
-    else:
-        duration_ratio = duration_ms / (ref_duration_ms + EPSILON)
-        if duration_ratio < 0.25 or duration_ratio > 4.0:
-            duration_penalty = 20.0
-        elif duration_ratio < 0.35 or duration_ratio > 3.0:
-            duration_penalty = 10.0
-        elif duration_ratio < 0.5 or duration_ratio > 2.5:
-            duration_penalty = 4.0
-        else:
-            duration_penalty = 0.0
-
-    if rms_mean < _RMS_SILENT:
-        volume_penalty = 35.0
-    elif rms_mean < _RMS_VERY_QUIET:
-        volume_penalty = 10.0
-    else:
-        volume_penalty = 0.0
-
-    if zcr_mean > _ZCR_ACTIVE_NOISE and rms_mean < _RMS_LOW_FOR_ZCR_CHECK:
-        noise_penalty = 20.0
-    elif zcr_mean > _ZCR_EXTREME:
-        noise_penalty = 10.0
-    else:
-        noise_penalty = 0.0
-
-    return duration_penalty, volume_penalty, noise_penalty
 
 
 def compute_pronunciation_penalty(sub_scores: dict[str, float], phoneme_type: str) -> float:
     mfcc_score = sub_scores.get("mfcc_score", 100.0)
-    sequence_score = sub_scores.get("sequence_mfcc_score", 100.0)
     duration_score = sub_scores.get("duration_score", 100.0)
     centroid_score = sub_scores.get("spectral_centroid_score", 100.0)
+    zcr_score = sub_scores.get("zcr_score", 100.0)
 
     penalty = 0.0
     if mfcc_score < _MFCC_LOW_THRESHOLD:
-        penalty += 8.0
-    if sequence_score < _SEQUENCE_LOW_THRESHOLD:
-        penalty += 5.0
+        penalty += 7.0
     if duration_score < _DURATION_LOW_THRESHOLD:
         penalty += 4.0
     if centroid_score < _CENTROID_LOW_THRESHOLD:
+        penalty += 3.0
+    if phoneme_type == "consonant" and zcr_score < _ZCR_LOW_THRESHOLD:
         penalty += 4.0
-    if phoneme_type == "vowel" and mfcc_score < _VOWEL_MFCC_DOUBLE and centroid_score < _VOWEL_MFCC_DOUBLE:
-        penalty += 6.0
-    return penalty
+    return round(float(penalty), 1)
 
 
 def get_feedback(score: float, phoneme: str, phoneme_type: str) -> str:
@@ -398,10 +280,11 @@ def _get_recording_quality_result(
 
     status = user_features.get("recording_quality_status")
     if status in ("ok", "bad"):
+        word_match = user_features.get("word_match")
         return {
             "status": status,
             "issue_flags": _coerce_issue_flags(user_features.get("issue_flags")),
-            "word_match": user_features.get("word_match") if isinstance(user_features.get("word_match"), bool) else None,
+            "word_match": word_match if isinstance(word_match, bool) else None,
         }
 
     return evaluate_recording_quality(user_features, reference)
@@ -429,6 +312,28 @@ def _build_quality_gate_result(quality_result: RecordingQualityResult) -> ScoreR
     }
 
 
+def _get_ko_metrics(
+    phoneme: str,
+    user_features: AudioFeatures,
+    reference: ReferenceVector,
+    ko_reference: ReferenceVector | None,
+) -> dict[str, float]:
+    if phoneme not in _KO_REFERENCE_PHONEMES:
+        return {}
+    return compute_ko_reference_metrics(user_features, reference, ko_reference)
+
+
+def _get_liquid_metrics(
+    phoneme: str,
+    user_features: AudioFeatures,
+    reference: ReferenceVector,
+    liquid_alt_reference: ReferenceVector | None,
+) -> dict[str, float]:
+    if phoneme not in _LIQUID_PHONEMES:
+        return {}
+    return compute_liquid_alt_metrics(user_features, reference, liquid_alt_reference)
+
+
 def score_pronunciation(
     user_features: AudioFeatures,
     reference: ReferenceVector,
@@ -452,22 +357,13 @@ def score_pronunciation(
     ref_duration_ms = float(reference.get("duration_ms", 500))
 
     pronunciation_penalty = compute_pronunciation_penalty(sub_scores, phoneme_type)
-
-    if phoneme in _DURATION_FOCUSED_PHONEMES or phoneme in _LIQUID_PHONEMES:
-        ko_metrics = {}
-    else:
-        ko_metrics = compute_ko_reference_metrics(user_features, reference, ko_reference)
-
-    if phoneme in _LIQUID_PHONEMES:
-        liquid_alt_metrics = compute_liquid_alt_metrics(user_features, reference, liquid_alt_reference)
-    else:
-        liquid_alt_metrics = {}
+    ko_metrics = _get_ko_metrics(phoneme, user_features, reference, ko_reference)
+    liquid_alt_metrics = _get_liquid_metrics(phoneme, user_features, reference, liquid_alt_reference)
 
     korean_like_penalty = ko_metrics.get("korean_like_penalty", 0.0)
-    mismatch_penalty = compute_mismatch_penalty(base_score, ko_metrics)
     liquid_alt_penalty = liquid_alt_metrics.get("liquid_alt_penalty", 0.0)
+    total_penalty = pronunciation_penalty + korean_like_penalty + liquid_alt_penalty
 
-    total_penalty = pronunciation_penalty + korean_like_penalty + mismatch_penalty + liquid_alt_penalty
     duration_ratio = duration_ms / (ref_duration_ms + EPSILON)
     final_score = float(np.clip(base_score - total_penalty, 0.0, 100.0))
     feedback = get_feedback(final_score, phoneme, phoneme_type)
@@ -481,9 +377,10 @@ def score_pronunciation(
         "recording_quality_status": quality_result["status"],
         "issue_flags": quality_result["issue_flags"],
         "word_match": quality_result["word_match"],
-        "pronunciation_penalty": round(pronunciation_penalty, 1),
-        "mismatch_penalty": round(mismatch_penalty, 1),
+        "pronunciation_penalty": pronunciation_penalty,
+        "korean_like_penalty": round(korean_like_penalty, 1),
         "liquid_alt_penalty": round(liquid_alt_penalty, 1),
+        "mismatch_penalty": 0.0,
         "total_penalty": round(total_penalty, 1),
         "final_score": round(final_score, 1),
         "duration_ratio": round(duration_ratio, 3),
