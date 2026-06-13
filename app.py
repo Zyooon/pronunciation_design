@@ -1,4 +1,5 @@
 import csv
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Generator
@@ -6,6 +7,7 @@ from typing import Any, Generator
 import gradio as gr
 
 from pipeline.audio import load_trimmed_audio
+from pipeline.db import save_user_recording_result
 from pipeline.features import extract_features
 from pipeline.quality import evaluate_recording_quality
 from pipeline.reference import (
@@ -22,29 +24,55 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 RESULTS_PATH = PROJECT_ROOT / "data" / "results.csv"
 
 
-# ── Waveform bars (decorative) ────────────────────────────────────────────────
-_WAVE_H = [8, 14, 22, 28, 18, 34, 24, 38, 26, 18, 32, 20, 28, 36, 22, 16, 30, 24, 38, 12]
-_WAVE_BARS = "".join(
-    f'<span style="height:{h}px;animation-delay:{i*0.07:.2f}s"></span>'
-    for i, h in enumerate(_WAVE_H)
-)
-_REC_VISUAL_HTML = f"""
-<div class="rec-visual">
-  <div class="rec-circles">
-    <div class="rec-ring1"></div>
-    <div class="rec-ring2"></div>
-    <div class="rec-core">
-      <svg width="36" height="36" viewBox="0 0 24 24" fill="none"
-           stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-        <line x1="12" y1="19" x2="12" y2="23"/>
-        <line x1="8" y1="23" x2="16" y2="23"/>
-      </svg>
-    </div>
-  </div>
-  <div class="waveform">{_WAVE_BARS}</div>
-</div>
+CUSTOM_CSS = """
+body, .gradio-container {
+  background: linear-gradient(160deg, #e8f4fd 0%, #dbeafe 100%) !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", sans-serif !important;
+  color: #1e293b;
+}
+footer { display: none !important; }
+.app-shell { max-width: 430px !important; margin: 0 auto !important; padding: 18px 0 70px !important; }
+.screen-card { background: #ffffff; border-radius: 24px; box-shadow: 0 4px 28px rgba(30,64,175,.10); overflow: hidden; margin: 0 12px; }
+.hero { background: linear-gradient(135deg, #3b82f6, #6366f1); padding: 34px 24px 28px; text-align: center; color: #fff; }
+.hero-title { font-size: 28px; font-weight: 800; letter-spacing: -.02em; }
+.hero-sub { font-size: 13px; opacity: .88; margin-top: 6px; line-height: 1.5; }
+.body-pad { padding: 18px; }
+.target-preview, .target-card { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 16px; padding: 14px 16px; margin: 12px 0; }
+.target-word { font-size: 30px; font-weight: 800; color: #1e40af; }
+.target-phoneme { display: inline-block; margin-top: 6px; background: #dbeafe; color: #1d4ed8; border-radius: 999px; padding: 4px 12px; font-weight: 700; }
+.target-hint { margin-top: 10px; color: #64748b; font-size: 13px; }
+button { border-radius: 14px !important; }
+#btn-start, #btn-analyze, #btn-change-word { background: #3b82f6 !important; color: #fff !important; border: 0 !important; height: 50px !important; font-weight: 700 !important; }
+#btn-back, #btn-try-again { background: #fff !important; color: #2563eb !important; border: 1px solid #bfdbfe !important; height: 46px !important; font-weight: 700 !important; }
+.recording-zone { background: linear-gradient(160deg, #1e3058, #18264a); padding: 20px 16px; }
+.recording-title { color: #dbeafe; text-align: center; font-weight: 700; margin-bottom: 12px; }
+.status-text p { color: #ef4444; font-size: 13px; font-weight: 700; }
+.loading-wrap { display: flex; flex-direction: column; align-items: center; padding: 50px 20px; gap: 16px; }
+.spinner-ring { width: 48px; height: 48px; border: 4px solid rgba(59,130,246,.18); border-top-color: #3b82f6; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 15px; color: #64748b; font-weight: 600; }
+.result-target { display: flex; align-items: center; gap: 10px; padding: 18px 18px 0; }
+.result-word { font-size: 28px; font-weight: 800; }
+.result-phoneme { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; border-radius: 999px; font-size: 14px; font-weight: 700; padding: 5px 12px; }
+.score-card { background: linear-gradient(135deg, #3b82f6, #6366f1); border-radius: 20px; margin: 14px 16px 0; padding: 26px 20px; text-align: center; color: #fff; }
+.score-card.bad { background: linear-gradient(135deg, #f97316, #ef4444); }
+.score-lbl { font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; opacity: .78; margin-bottom: 8px; }
+.score-num { font-size: 68px; font-weight: 800; line-height: 1; letter-spacing: -.03em; }
+.score-max { font-size: 18px; opacity: .68; }
+.score-grade { font-size: 20px; font-weight: 800; margin-top: 8px; }
+.score-grade-sub { font-size: 13px; opacity: .88; margin-top: 4px; line-height: 1.5; }
+.feedback-card, .metrics-card, .issue-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 18px; padding: 18px; margin: 12px 16px 0; }
+.issue-card { background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
+.card-lbl { font-size: 11px; font-weight: 800; letter-spacing: .10em; text-transform: uppercase; color: #94a3b8; margin-bottom: 8px; }
+.card-body { font-size: 14.5px; color: #334155; line-height: 1.75; }
+.issue-card .card-lbl, .issue-card .card-body { color: #9a3412; }
+.metric-row { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+.metric-name { font-size: 12px; font-weight: 700; color: #64748b; width: 78px; text-align: right; }
+.metric-track { flex: 1; height: 7px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+.metric-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #6366f1); border-radius: 999px; }
+.metric-val { width: 38px; text-align: right; font-size: 13px; font-weight: 800; color: #1e40af; }
+.actions { padding: 14px 16px 24px; gap: 10px; }
+@media (max-width: 480px) { .app-shell { padding: 0 0 60px !important; } .screen-card { margin: 0; border-radius: 0 0 20px 20px; } }
 """
 
 _LOADING_HTML = """
@@ -54,333 +82,15 @@ _LOADING_HTML = """
 </div>
 """
 
-CUSTOM_CSS = """
-/* ── Base ───────────────────────────────────── */
-body,
-.gradio-container {
-  background: linear-gradient(160deg, #e8f4fd 0%, #dbeafe 100%) !important;
-  background-attachment: fixed !important;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
-               "Apple SD Gothic Neo", sans-serif !important;
-  min-height: 100vh;
-  color: #1e293b;
+_ISSUE_LABELS = {
+    "too_short": "녹음이 너무 짧습니다",
+    "too_long": "녹음이 너무 깁니다",
+    "too_quiet": "소리가 너무 작습니다",
+    "almost_silent": "거의 무음에 가깝습니다",
+    "high_noise": "잡음이 높게 감지됐습니다",
+    "extreme_zcr": "비정상적인 고주파/노이즈 패턴이 감지됐습니다",
+    "word_mismatch": "목표 단어와 다른 단어가 감지됐습니다",
 }
-footer { display: none !important; }
-
-/* ── Center shell ───────────────────────────── */
-.app-shell {
-  max-width: 420px !important;
-  margin: 0 auto !important;
-  padding: 24px 0 80px !important;
-}
-.app-shell > .form,
-.app-shell > div {
-  gap: 0 !important;
-  padding: 0 !important;
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-/* ── White screen card ──────────────────────── */
-.screen-card {
-  background: #ffffff;
-  border-radius: 24px;
-  box-shadow: 0 4px 28px rgba(30, 64, 175, 0.10);
-  overflow: hidden;
-  margin: 0 12px;
-}
-.screen-card > .form,
-.screen-card > div {
-  gap: 0 !important;
-  padding: 0 !important;
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  border-radius: 0 !important;
-}
-
-/* ── Welcome — gradient header ──────────────── */
-.w-header {
-  background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
-  padding: 36px 24px 28px;
-  text-align: center;
-  color: #ffffff;
-}
-.w-logo      { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 6px; }
-.w-subtitle  { font-size: 13.5px; opacity: 0.90; letter-spacing: 0.01em; }
-.w-desc      { font-size: 12.5px; opacity: 0.78; margin-top: 8px; line-height: 1.5; }
-
-/* ── Welcome — 3-step cards ─────────────────── */
-.steps-row {
-  display: flex;
-  gap: 10px;
-  padding: 20px 18px 4px;
-}
-.step-item {
-  flex: 1;
-  background: #f0f7ff;
-  border: 1px solid #bfdbfe;
-  border-radius: 16px;
-  padding: 14px 8px;
-  text-align: center;
-}
-.step-num {
-  width: 28px; height: 28px;
-  border-radius: 50%;
-  background: #3b82f6;
-  color: #ffffff;
-  font-size: 13px; font-weight: 700;
-  display: flex; align-items: center; justify-content: center;
-  margin: 0 auto 8px;
-}
-.step-title { font-size: 12.5px; font-weight: 700; color: #1e40af; margin-bottom: 4px; }
-.step-desc  { font-size: 11px; color: #64748b; line-height: 1.4; }
-
-/* ── Welcome — body area ────────────────────── */
-.w-body > .form,
-.w-body > div {
-  padding: 14px 18px 6px !important;
-  gap: 10px !important;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-}
-
-.w-preview {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 11px 14px;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  border-radius: 13px;
-  min-height: 46px;
-}
-.w-preview-word    { font-size: 20px; font-weight: 800; color: #1e40af; }
-.w-preview-phoneme {
-  font-size: 13px; font-weight: 700; color: #1d4ed8;
-  background: #dbeafe; border-radius: 999px; padding: 3px 10px;
-}
-.w-error {
-  color: #ef4444; font-size: 13px; font-weight: 600;
-  padding: 2px 0; min-height: 20px;
-}
-
-/* ── Buttons ────────────────────────────────── */
-#btn-start {
-  background: #3b82f6 !important; color: #ffffff !important;
-  border: none !important; border-radius: 14px !important;
-  height: 52px !important; font-size: 16px !important; font-weight: 600 !important;
-  width: 100% !important;
-  box-shadow: 0 4px 16px rgba(59,130,246,0.32) !important;
-  transition: filter .15s, transform .12s !important;
-  margin: 4px 0 18px;
-}
-#btn-start:hover { filter: brightness(1.08) !important; transform: translateY(-1px) !important; }
-
-#btn-back {
-  background: transparent !important; border: none !important;
-  color: #3b82f6 !important; font-size: 14px !important; font-weight: 600 !important;
-  padding: 14px 20px 6px !important; height: auto !important;
-  box-shadow: none !important; text-align: left !important; width: auto !important;
-}
-
-#btn-analyze {
-  background: #3b82f6 !important; color: #ffffff !important;
-  border: none !important; border-radius: 14px !important;
-  height: 52px !important; font-size: 16px !important; font-weight: 600 !important;
-  width: 100% !important;
-  box-shadow: 0 4px 16px rgba(59,130,246,0.32) !important;
-  transition: filter .15s, transform .12s !important;
-}
-#btn-analyze:hover { filter: brightness(1.08) !important; transform: translateY(-1px) !important; }
-
-#btn-try-again {
-  background: #ffffff !important; border: 1.5px solid #3b82f6 !important;
-  color: #3b82f6 !important; border-radius: 14px !important;
-  height: 48px !important; font-size: 14px !important; font-weight: 600 !important;
-}
-#btn-change-word {
-  background: #3b82f6 !important; color: #ffffff !important;
-  border: none !important; border-radius: 14px !important;
-  height: 48px !important; font-size: 14px !important; font-weight: 600 !important;
-}
-
-/* ── Practice — word display ────────────────── */
-.pw-section {
-  padding: 16px 20px 14px;
-  border-bottom: 1px solid #f1f5f9;
-}
-.pw-label   { font-size: 11px; font-weight: 700; letter-spacing: .10em; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px; }
-.pw-word    { font-size: 48px; font-weight: 700; color: #1e293b; line-height: 1; margin-bottom: 8px; letter-spacing: -0.02em; }
-.pw-phoneme {
-  display: inline-block; background: #eff6ff; color: #1d4ed8;
-  border-radius: 999px; font-size: 20px; font-weight: 700;
-  padding: 8px 18px; margin-bottom: 10px;
-}
-.pw-hint { font-size: 14px; color: #64748b; line-height: 1.6; }
-
-/* ── Practice — recording zone (dark) ──────── */
-#recording-zone {
-  background: linear-gradient(160deg, #1e3058 0%, #18264a 100%) !important;
-  border-radius: 0 !important;
-}
-#recording-zone > .form,
-#recording-zone > div {
-  background: transparent !important;
-  border: none !important;
-  gap: 0 !important;
-  padding: 0 !important;
-  box-shadow: none !important;
-}
-
-.rec-visual {
-  display: flex; flex-direction: column; align-items: center;
-  padding: 28px 20px 18px;
-}
-.rec-circles {
-  position: relative; width: 144px; height: 144px;
-  display: flex; align-items: center; justify-content: center;
-  margin-bottom: 22px;
-}
-.rec-ring1 {
-  position: absolute; width: 144px; height: 144px; border-radius: 50%;
-  background: rgba(59,130,246,0.12);
-  animation: pulseRing 2.2s ease-out infinite;
-}
-.rec-ring2 {
-  position: absolute; width: 112px; height: 112px; border-radius: 50%;
-  background: rgba(59,130,246,0.18);
-  animation: pulseRing 2.2s ease-out infinite .45s;
-}
-.rec-core {
-  position: relative; width: 80px; height: 80px; border-radius: 50%;
-  background: linear-gradient(145deg, #4f9cf0, #2563eb);
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 8px 24px rgba(37,99,235,.55);
-}
-@keyframes pulseRing {
-  0%   { transform: scale(.85); opacity: .8; }
-  65%  { transform: scale(1);   opacity: .25; }
-  100% { transform: scale(1);   opacity: 0; }
-}
-.waveform { display: flex; align-items: center; gap: 3px; height: 38px; }
-.waveform span {
-  display: inline-block; width: 3px;
-  background: rgba(148,196,255,.55); border-radius: 2px;
-  animation: waveAnim 1.6s ease-in-out infinite;
-}
-@keyframes waveAnim {
-  0%, 100% { transform: scaleY(.35); }
-  50%       { transform: scaleY(1); }
-}
-
-/* Style the Gradio Audio inside the dark zone */
-#audio-practice label        { color: rgba(255,255,255,0.55) !important; font-size: 12px !important; }
-#audio-practice .wrap        { background: rgba(15,30,70,.55) !important; border-color: rgba(59,130,246,.28) !important; border-radius: 16px !important; margin: 0 16px 18px !important; }
-#audio-practice .icon-button { color: rgba(255,255,255,.8) !important; }
-#audio-practice .waveform    { color: #60a5fa !important; }
-
-/* Practice status / error */
-.p-status > p, .p-status p {
-  color: #ef4444; font-size: 13px; font-weight: 600;
-  padding: 6px 20px 0; margin: 0;
-}
-
-/* Analyze btn wrapper padding */
-.analyze-wrap > .form,
-.analyze-wrap > div {
-  padding: 0 18px 20px !important;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-}
-
-/* ── Result screen ──────────────────────────── */
-.result-target {
-  display: flex; align-items: center; gap: 10px;
-  padding: 18px 18px 0;
-}
-.result-word { font-size: 26px; font-weight: 800; color: #1e293b; }
-.result-phoneme-pill {
-  background: #eff6ff; color: #1d4ed8;
-  border: 1px solid #bfdbfe; border-radius: 999px;
-  font-size: 14px; font-weight: 700; padding: 5px 12px;
-}
-
-.score-card {
-  background: linear-gradient(135deg, #3b82f6, #6366f1);
-  border-radius: 20px; margin: 12px 16px 0;
-  padding: 26px 20px; text-align: center; color: #ffffff;
-}
-.score-lbl  { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; opacity: .78; margin-bottom: 8px; }
-.score-num  { font-size: 72px; font-weight: 800; line-height: 1; letter-spacing: -0.03em; }
-.score-max  { font-size: 18px; opacity: .65; }
-.score-grade { font-size: 20px; font-weight: 700; margin-top: 8px; }
-.score-grade-sub { font-size: 13.5px; opacity: .85; margin-top: 3px; }
-
-.feedback-card {
-  background: #fff; border: 1px solid #e2e8f0; border-radius: 18px;
-  padding: 18px; margin: 12px 16px 0;
-}
-.feedback-lbl  { font-size: 11px; font-weight: 700; letter-spacing: .10em; text-transform: uppercase; color: #94a3b8; margin-bottom: 8px; }
-.feedback-body { font-size: 14.5px; color: #334155; line-height: 1.75; }
-
-.metrics-card {
-  background: #fff; border: 1px solid #e2e8f0; border-radius: 18px;
-  padding: 18px; margin: 12px 16px 0;
-}
-.metrics-lbl { font-size: 11px; font-weight: 700; letter-spacing: .10em; text-transform: uppercase; color: #94a3b8; margin-bottom: 12px; }
-.m-row       { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
-.m-name      { font-size: 12px; font-weight: 600; color: #64748b; width: 80px; flex-shrink: 0; text-align: right; }
-.m-track     { flex: 1; height: 7px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
-.m-fill      { height: 100%; background: linear-gradient(90deg, #3b82f6, #6366f1); border-radius: 999px; }
-.m-val       { font-size: 13px; font-weight: 700; color: #1e40af; width: 36px; text-align: right; flex-shrink: 0; }
-
-.result-actions > .form,
-.result-actions > div {
-  padding: 14px 16px 24px !important;
-  gap: 10px !important;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-}
-
-/* ── Loading spinner ────────────────────────── */
-.loading-wrap {
-  display: flex; flex-direction: column; align-items: center;
-  padding: 52px 20px; gap: 16px;
-}
-.spinner-ring {
-  width: 48px; height: 48px;
-  border: 4px solid rgba(59,130,246,.18);
-  border-top-color: #3b82f6;
-  border-radius: 50%;
-  animation: spin .8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-.loading-text { font-size: 15px; color: #64748b; font-weight: 500; }
-
-/* ── Word mismatch warning ──────────────────── */
-.word-mismatch-warning {
-  background: #fef3c7; border: 1px solid #fcd34d; border-radius: 14px;
-  padding: 14px 18px; margin: 12px 16px 0;
-  display: flex; align-items: flex-start; gap: 10px;
-}
-.wm-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
-.wm-text { font-size: 13.5px; color: #92400e; font-weight: 500; line-height: 1.6; }
-
-/* ── Mobile ─────────────────────────────────── */
-@media (max-width: 480px) {
-  .app-shell { padding: 0 0 60px !important; }
-  .screen-card { margin: 0; border-radius: 0 0 20px 20px; }
-  .w-header { border-radius: 0; }
-  .steps-row { flex-direction: column; gap: 8px; }
-  .pw-word  { font-size: 40px; }
-  .score-num { font-size: 60px; }
-}
-"""
 
 
 # ── CSV helpers ───────────────────────────────────────────────────────────────
@@ -391,59 +101,113 @@ def ensure_results_csv() -> None:
         return
     with RESULTS_PATH.open("w", encoding="utf-8-sig", newline="") as f:
         csv.writer(f).writerow([
-            "timestamp", "target_word", "korean_pronunciation", "phoneme",
-            "score", "feedback",
-            "mfcc_score", "duration_score", "rms_score", "zcr_score", "spectral_centroid_score",
+            "timestamp",
+            "target_word",
+            "korean_pronunciation",
+            "phoneme",
+            "score",
+            "pronunciation_score",
+            "recording_quality_status",
+            "issue_flags",
+            "feedback",
+            "mfcc_score",
+            "duration_score",
+            "rms_score",
+            "zcr_score",
+            "spectral_centroid_score",
         ])
 
 
+def _csv_value(value: Any) -> str | float | int | None:
+    if isinstance(value, list):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def save_result(
+    *,
     target_word: str,
     korean_pronunciation: str,
     phoneme: str,
     result: dict[str, Any],
+    features: dict[str, Any],
+    recording_path: str | None,
 ) -> None:
+    """CSV와 SQLite에 사용자 분석 결과를 저장한다."""
     ensure_results_csv()
-    d = result.get("details", {})
+    details = result.get("details", {})
+    issue_flags = result.get("issue_flags", [])
+
     with RESULTS_PATH.open("a", encoding="utf-8-sig", newline="") as f:
         csv.writer(f).writerow([
             datetime.now().isoformat(timespec="seconds"),
-            target_word, korean_pronunciation, phoneme,
-            result.get("score"), result.get("feedback"),
-            d.get("mfcc_score", ""), d.get("duration_score", ""),
-            d.get("rms_score", ""), d.get("zcr_score", ""),
-            d.get("spectral_centroid_score", ""),
+            target_word,
+            korean_pronunciation,
+            phoneme,
+            result.get("score"),
+            result.get("pronunciation_score"),
+            result.get("recording_quality_status"),
+            _csv_value(issue_flags),
+            result.get("feedback"),
+            details.get("mfcc_score", ""),
+            details.get("duration_score", ""),
+            details.get("rms_score", ""),
+            details.get("zcr_score", ""),
+            details.get("spectral_centroid_score", ""),
         ])
+
+    save_user_recording_result(
+        word=target_word,
+        phoneme=phoneme,
+        score=_float_or_none(result.get("score")),
+        grade=_grade_for_storage(result),
+        feedback=result.get("feedback"),
+        recording_path=recording_path,
+        duration_ms=_float_or_none(features.get("duration_ms")),
+        rms_mean=_float_or_none(features.get("rms_mean")),
+        zcr_mean=_float_or_none(features.get("zcr_mean")),
+        spectral_centroid_mean=_float_or_none(features.get("spectral_centroid_mean")),
+        details=details,
+    )
 
 
 # ── App data init ─────────────────────────────────────────────────────────────
 
 def _init() -> tuple[dict, list, dict, list, str | None]:
     try:
-        ref   = load_reference_vectors()
-        words = get_available_targets()
-        index = build_target_index(words)
-        choices = get_gradio_choices(words)
-        if not choices:
+        reference_vectors = load_reference_vectors()
+        target_words = get_available_targets()
+        target_index = build_target_index(target_words)
+        gradio_choices = get_gradio_choices(target_words)
+        if not gradio_choices:
             raise ValueError("사용 가능한 단어가 없습니다.")
-        return ref, words, index, choices, None
-    except Exception as e:
-        return {}, [], {}, [], f"{type(e).__name__}: {e}"
+        return reference_vectors, target_words, target_index, gradio_choices, None
+    except Exception as exc:
+        return {}, [], {}, [], f"{type(exc).__name__}: {exc}"
 
 
 REFERENCE_VECTORS, TARGET_WORDS, TARGET_INDEX, GRADIO_CHOICES, STARTUP_ERROR = _init()
 
 
-# ── Render helpers ────────────────────────────────────────────────────────────
+# ── Render helpers ───────────────────────────────────────────────────────────
 
 def render_welcome_preview(target_id: str | None) -> str:
     if not target_id or target_id not in TARGET_INDEX:
-        return '<div class="w-preview" style="opacity:.45;">단어를 선택하면 미리보기가 표시됩니다</div>'
-    t = TARGET_INDEX[target_id]
+        return '<div class="target-preview" style="opacity:.55;">단어를 선택하면 미리보기가 표시됩니다.</div>'
+    target = TARGET_INDEX[target_id]
     return f"""
-    <div class="w-preview">
-      <span class="w-preview-word">{t.word}</span>
-      <span class="w-preview-phoneme">/{t.phoneme}/</span>
+    <div class="target-preview">
+      <div class="target-word">{target.word}</div>
+      <div class="target-phoneme">/{target.phoneme}/</div>
     </div>
     """
 
@@ -451,29 +215,45 @@ def render_welcome_preview(target_id: str | None) -> str:
 def render_practice_header(target_id: str | None) -> str:
     if not target_id or target_id not in TARGET_INDEX:
         return ""
-    t = TARGET_INDEX[target_id]
+    target = TARGET_INDEX[target_id]
     return f"""
-    <div class="pw-section">
-      <div class="pw-label">Target Word</div>
-      <div class="pw-word">{t.word}</div>
-      <div class="pw-phoneme">/{t.phoneme}/</div>
-      <div class="pw-hint">한국어 힌트: {t.korean_pronunciation}</div>
+    <div class="target-card">
+      <div class="target-word">{target.word}</div>
+      <div class="target-phoneme">/{target.phoneme}/</div>
+      <div class="target-hint">한국어 힌트: {target.korean_pronunciation}</div>
     </div>
     """
 
 
-def render_result_content(target: Any, result: dict[str, Any], word_match: bool | None = None) -> str:
-    score    = float(result["score"])
-    feedback = result["feedback"]
-    details  = result.get("details", {})
-
+def _grade_for_score(score: float) -> tuple[str, str]:
     if score >= 85:
-        grade, grade_sub = "Excellent", "기준 발음과 상당히 유사합니다."
-    elif score >= 70:
-        grade, grade_sub = "Good", "전반적으로 좋지만 더 다듬을 수 있습니다."
-    else:
-        grade, grade_sub = "Needs Practice", "조금 더 반복 연습해보세요."
+        return "Excellent", "기준 발음과 상당히 유사합니다."
+    if score >= 70:
+        return "Good", "전반적으로 좋지만 더 다듬을 수 있습니다."
+    return "Needs Practice", "조금 더 반복 연습해보세요."
 
+
+def _grade_for_storage(result: dict[str, Any]) -> str | None:
+    score = result.get("score")
+    if score is None:
+        return None
+    grade, _ = _grade_for_score(float(score))
+    return grade
+
+
+def _render_issue_card(issue_flags: list[str]) -> str:
+    if not issue_flags:
+        return ""
+    issue_items = "<br>".join(f"• {_ISSUE_LABELS.get(flag, flag)}" for flag in issue_flags)
+    return f"""
+    <div class="issue-card">
+      <div class="card-lbl">Recording Check</div>
+      <div class="card-body">{issue_items}</div>
+    </div>
+    """
+
+
+def _render_metric_rows(details: dict[str, Any]) -> str:
     label_map = {
         "mfcc_score": "MFCC",
         "duration_score": "Duration",
@@ -481,62 +261,81 @@ def render_result_content(target: Any, result: dict[str, Any], word_match: bool 
         "zcr_score": "ZCR",
         "spectral_centroid_score": "Spectral",
     }
-    rows = "".join(
-        f'<div class="m-row">'
-        f'<div class="m-name">{lbl}</div>'
-        f'<div class="m-track"><div class="m-fill" style="width:{details[k]}%"></div></div>'
-        f'<div class="m-val">{details[k]}</div>'
-        f'</div>'
-        for k, lbl in label_map.items()
-        if details.get(k) not in ("", None)
-    )
-
-    word_mismatch_html = ""
-    if word_match is False:
-        word_mismatch_html = (
-            f'<div class="word-mismatch-warning">'
-            f'<span class="wm-icon">⚠️</span>'
-            f'<span class="wm-text">다른 단어가 감지됐습니다. '
-            f'<strong>\'{target.word}\'</strong>를 발음해 주세요.</span>'
+    rows: list[str] = []
+    for key, label in label_map.items():
+        value = details.get(key)
+        if value in ("", None):
+            continue
+        numeric_value = _float_or_none(value)
+        width = 0 if numeric_value is None else max(0, min(100, numeric_value))
+        rows.append(
+            f'<div class="metric-row">'
+            f'<div class="metric-name">{label}</div>'
+            f'<div class="metric-track"><div class="metric-fill" style="width:{width}%"></div></div>'
+            f'<div class="metric-val">{value}</div>'
             f'</div>'
         )
+    if not rows:
+        return ""
+    return f'<div class="metrics-card"><div class="card-lbl">Detailed Metrics</div>{"".join(rows)}</div>'
+
+
+def render_result_content(target: Any, result: dict[str, Any]) -> str:
+    score = result.get("score")
+    feedback = result.get("feedback", "")
+    details = result.get("details", {})
+    issue_flags = result.get("issue_flags") or details.get("issue_flags") or []
+
+    if score is None:
+        score_html = """
+        <div class="score-card bad">
+          <div class="score-lbl">Pronunciation Score</div>
+          <div class="score-num">--</div>
+          <div class="score-grade">재녹음 필요</div>
+          <div class="score-grade-sub">녹음 상태 또는 단어 일치 여부를 먼저 확인해주세요.</div>
+        </div>
+        """
+    else:
+        numeric_score = float(score)
+        grade, grade_sub = _grade_for_score(numeric_score)
+        score_html = f"""
+        <div class="score-card">
+          <div class="score-lbl">Pronunciation Score</div>
+          <div><span class="score-num">{numeric_score:.0f}</span><span class="score-max"> / 100</span></div>
+          <div class="score-grade">{grade}</div>
+          <div class="score-grade-sub">{grade_sub}</div>
+        </div>
+        """
 
     return f"""
     <div class="result-target">
       <div class="result-word">{target.word}</div>
-      <div class="result-phoneme-pill">/{target.phoneme}/</div>
+      <div class="result-phoneme">/{target.phoneme}/</div>
     </div>
-    {word_mismatch_html}
-    <div class="score-card">
-      <div class="score-lbl">Pronunciation Score</div>
-      <div><span class="score-num">{score:.0f}</span><span class="score-max"> / 100</span></div>
-      <div class="score-grade">{grade}</div>
-      <div class="score-grade-sub">{grade_sub}</div>
-    </div>
+    {_render_issue_card(issue_flags)}
+    {score_html}
     <div class="feedback-card">
-      <div class="feedback-lbl">Feedback</div>
-      <div class="feedback-body">{feedback}</div>
+      <div class="card-lbl">Feedback</div>
+      <div class="card-body">{feedback}</div>
     </div>
-    {"" if not rows else f'<div class="metrics-card"><div class="metrics-lbl">Detailed Metrics</div>{rows}</div>'}
+    {_render_metric_rows(details)}
     """
 
 
-# ── Event handlers ────────────────────────────────────────────────────────────
+# ── Event handlers ───────────────────────────────────────────────────────────
 
 def on_target_change(target_id: str) -> str:
-    # outputs(1): [welcome_word_preview]
     return render_welcome_preview(target_id)
 
 
 def start_practice(target_id: str) -> tuple:
-    # outputs(5): [screen_welcome, screen_practice, screen_result, practice_header, welcome_error]
     if not target_id:
         return (
             gr.update(visible=True),
             gr.update(visible=False),
             gr.update(visible=False),
             "",
-            '<div class="w-error">단어를 먼저 선택해주세요.</div>',
+            '<div style="color:#ef4444;font-weight:700;">단어를 먼저 선택해주세요.</div>',
         )
     return (
         gr.update(visible=False),
@@ -548,36 +347,15 @@ def start_practice(target_id: str) -> tuple:
 
 
 def go_to_welcome() -> tuple:
-    # outputs(3): [screen_welcome, screen_practice, screen_result]
-    return (
-        gr.update(visible=True),
-        gr.update(visible=False),
-        gr.update(visible=False),
-    )
+    return gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
 
 
-def analyze_pronunciation(
-    target_id: str,
-    audio_file: str | None,
-) -> Generator:
-    # Generator — outputs(4): [screen_practice, screen_result, result_content, practice_status]
-
+def analyze_pronunciation(target_id: str, audio_file: str | None) -> Generator:
     if not audio_file:
-        yield (
-            gr.update(visible=True),
-            gr.update(visible=False),
-            "",
-            "음성을 녹음하거나 파일을 업로드해주세요.",
-        )
+        yield gr.update(visible=True), gr.update(visible=False), "", "음성을 녹음하거나 파일을 업로드해주세요."
         return
 
-    # Show loading screen
-    yield (
-        gr.update(visible=False),
-        gr.update(visible=True),
-        _LOADING_HTML,
-        "",
-    )
+    yield gr.update(visible=False), gr.update(visible=True), _LOADING_HTML, ""
 
     try:
         target, reference = get_reference_for_target_id(
@@ -585,8 +363,8 @@ def analyze_pronunciation(
             target_index=TARGET_INDEX,
             reference_vectors=REFERENCE_VECTORS,
         )
-        y, sr = load_trimmed_audio(audio_file)
-        features = extract_features(y, sr)
+        waveform, sample_rate = load_trimmed_audio(audio_file)
+        features = extract_features(waveform, sample_rate)
         quality_result = evaluate_recording_quality(
             features=features,
             reference=reference,
@@ -597,136 +375,74 @@ def analyze_pronunciation(
             user_features=features,
             reference=reference,
             phoneme=target.phoneme,
+            recording_quality_result=quality_result,
         )
         save_result(
             target_word=target.word,
             korean_pronunciation=target.korean_pronunciation,
             phoneme=target.phoneme,
             result=result,
+            features=features,
+            recording_path=audio_file,
         )
+        yield gr.update(visible=False), gr.update(visible=True), render_result_content(target, result), ""
+    except Exception as exc:
         yield (
             gr.update(visible=False),
             gr.update(visible=True),
-            render_result_content(target, result, word_match=quality_result["word_match"]),
-            "",
-        )
-
-    except Exception as e:
-        yield (
-            gr.update(visible=False),
-            gr.update(visible=True),
-            f'<div class="loading-wrap"><div class="loading-text">오류: {type(e).__name__} — {e}</div></div>',
+            f'<div class="loading-wrap"><div class="loading-text">오류: {type(exc).__name__} — {exc}</div></div>',
             "",
         )
 
 
 def try_again(target_id: str) -> tuple:
-    # outputs(5): [screen_practice, screen_result, practice_header, audio_input, practice_status]
-    return (
-        gr.update(visible=True),
-        gr.update(visible=False),
-        render_practice_header(target_id),
-        None,
-        "",
-    )
+    return gr.update(visible=True), gr.update(visible=False), render_practice_header(target_id), None, ""
 
 
 def change_word() -> tuple:
-    # outputs(4): [screen_welcome, screen_practice, screen_result, audio_input]
-    return (
-        gr.update(visible=True),
-        gr.update(visible=False),
-        gr.update(visible=False),
-        None,
-    )
+    return gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), None
 
 
-# ── UI ────────────────────────────────────────────────────────────────────────
+# ── UI ───────────────────────────────────────────────────────────────────────
 
 def build_app() -> gr.Blocks:
-    theme = gr.themes.Soft(
-        primary_hue="blue",
-        secondary_hue="indigo",
-        neutral_hue="slate",
-    )
+    theme = gr.themes.Soft(primary_hue="blue", secondary_hue="indigo", neutral_hue="slate")
     default_id = GRADIO_CHOICES[0][1] if GRADIO_CHOICES else None
 
     with gr.Blocks(title="PronounceAI", theme=theme, css=CUSTOM_CSS) as demo:
         with gr.Column(elem_classes=["app-shell"]):
-
-            # ════════════════════════════════════════
-            # SCREEN 1 — Welcome
-            # ════════════════════════════════════════
-            with gr.Column(
-                visible=True, elem_id="screen_welcome", elem_classes=["screen-card"]
-            ) as screen_welcome:
-
+            with gr.Column(visible=True, elem_id="screen_welcome", elem_classes=["screen-card"]) as screen_welcome:
                 gr.HTML("""
-                <div class="w-header">
-                  <div class="w-logo">PronounceAI</div>
-                  <div class="w-subtitle">Korean English Pronunciation Coach</div>
-                  <div class="w-desc">한국인 학습자를 위한 AI 발음 채점 앱</div>
-                </div>
-                <div class="steps-row">
-                  <div class="step-item">
-                    <div class="step-num">1</div>
-                    <div class="step-title">단어 선택</div>
-                    <div class="step-desc">연습할 단어를 선택하세요</div>
-                  </div>
-                  <div class="step-item">
-                    <div class="step-num">2</div>
-                    <div class="step-title">녹음</div>
-                    <div class="step-desc">단어를 발음하고 녹음하세요</div>
-                  </div>
-                  <div class="step-item">
-                    <div class="step-num">3</div>
-                    <div class="step-title">분석</div>
-                    <div class="step-desc">AI가 채점하고 피드백을 드립니다</div>
-                  </div>
+                <div class="hero">
+                  <div class="hero-title">PronounceAI</div>
+                  <div class="hero-sub">한국인 학습자를 위한 AI 영어 발음 코치</div>
                 </div>
                 """)
-
-                with gr.Column(elem_classes=["w-body"]):
+                with gr.Column(elem_classes=["body-pad"]):
                     target_dropdown = gr.Dropdown(
                         choices=GRADIO_CHOICES,
                         value=default_id,
                         label="연습할 단어 선택",
                         interactive=not bool(STARTUP_ERROR),
                     )
-                    welcome_word_preview = gr.HTML(
-                        value=render_welcome_preview(default_id)
-                    )
-                    welcome_error = gr.HTML("")
+                    welcome_word_preview = gr.HTML(value=render_welcome_preview(default_id))
+                    welcome_error = gr.HTML(STARTUP_ERROR or "")
+                    start_btn = gr.Button("Start Practice →", elem_id="btn-start", variant="primary")
 
-                start_btn = gr.Button(
-                    "Start Practice →", elem_id="btn-start", variant="primary"
-                )
-
-            # ════════════════════════════════════════
-            # SCREEN 2 — Practice
-            # ════════════════════════════════════════
-            with gr.Column(
-                visible=False, elem_id="screen_practice", elem_classes=["screen-card"]
-            ) as screen_practice:
-
-                back_btn = gr.Button("← Back", elem_id="btn-back")
-                practice_header = gr.HTML("")
-
-                with gr.Column(elem_id="recording-zone"):
-                    gr.HTML(_REC_VISUAL_HTML)
+            with gr.Column(visible=False, elem_id="screen_practice", elem_classes=["screen-card"]) as screen_practice:
+                with gr.Column(elem_classes=["body-pad"]):
+                    back_btn = gr.Button("← Back", elem_id="btn-back")
+                    practice_header = gr.HTML("")
+                with gr.Column(elem_classes=["recording-zone"]):
+                    gr.HTML('<div class="recording-title">단어를 발음하고 녹음해주세요</div>')
                     audio_input = gr.Audio(
                         sources=["microphone", "upload"],
                         type="filepath",
                         label="녹음 또는 파일 업로드",
-                        elem_id="audio-practice",
                         interactive=not bool(STARTUP_ERROR),
                     )
-
-                practice_status = gr.Markdown(
-                    value="", elem_classes=["p-status"]
-                )
-
-                with gr.Column(elem_classes=["analyze-wrap"]):
+                with gr.Column(elem_classes=["body-pad"]):
+                    practice_status = gr.Markdown(value="", elem_classes=["status-text"])
                     analyze_btn = gr.Button(
                         "Analyze Pronunciation",
                         elem_id="btn-analyze",
@@ -734,56 +450,29 @@ def build_app() -> gr.Blocks:
                         interactive=not bool(STARTUP_ERROR),
                     )
 
-            # ════════════════════════════════════════
-            # SCREEN 3 — Result
-            # ════════════════════════════════════════
-            with gr.Column(
-                visible=False, elem_id="screen_result", elem_classes=["screen-card"]
-            ) as screen_result:
-
+            with gr.Column(visible=False, elem_id="screen_result", elem_classes=["screen-card"]) as screen_result:
                 result_content = gr.HTML("")
+                with gr.Row(elem_classes=["actions"]):
+                    try_again_btn = gr.Button("Try Again", elem_id="btn-try-again", variant="secondary")
+                    change_word_btn = gr.Button("Change Word", elem_id="btn-change-word", variant="primary")
 
-                with gr.Row(elem_classes=["result-actions"]):
-                    try_again_btn = gr.Button(
-                        "Try Again", elem_id="btn-try-again", variant="secondary"
-                    )
-                    change_word_btn = gr.Button(
-                        "Change Word", elem_id="btn-change-word", variant="primary"
-                    )
-
-            # ── Event wiring ───────────────────────────────────────────────
-            target_dropdown.change(
-                fn=on_target_change,
-                inputs=[target_dropdown],
-                outputs=[welcome_word_preview],
-            )
-
+            target_dropdown.change(fn=on_target_change, inputs=[target_dropdown], outputs=[welcome_word_preview])
             start_btn.click(
                 fn=start_practice,
                 inputs=[target_dropdown],
-                outputs=[screen_welcome, screen_practice, screen_result,
-                         practice_header, welcome_error],
+                outputs=[screen_welcome, screen_practice, screen_result, practice_header, welcome_error],
             )
-
-            back_btn.click(
-                fn=go_to_welcome,
-                outputs=[screen_welcome, screen_practice, screen_result],
-            )
-
+            back_btn.click(fn=go_to_welcome, outputs=[screen_welcome, screen_practice, screen_result])
             analyze_btn.click(
                 fn=analyze_pronunciation,
                 inputs=[target_dropdown, audio_input],
-                outputs=[screen_practice, screen_result,
-                         result_content, practice_status],
+                outputs=[screen_practice, screen_result, result_content, practice_status],
             )
-
             try_again_btn.click(
                 fn=try_again,
                 inputs=[target_dropdown],
-                outputs=[screen_practice, screen_result,
-                         practice_header, audio_input, practice_status],
+                outputs=[screen_practice, screen_result, practice_header, audio_input, practice_status],
             )
-
             change_word_btn.click(
                 fn=change_word,
                 outputs=[screen_welcome, screen_practice, screen_result, audio_input],
