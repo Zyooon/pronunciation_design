@@ -603,7 +603,7 @@ function renderWordCompareByKey(key) {
       <div class="stat-card"><div class="stat-label">Label</div><div class="user-stat-value" style="font-size:22px;color:${_labelColor(row.test_label ?? "NULL", "border")};">${escHtml(label)}</div></div>
     </div>
     <div class="chart-grid">
-      <div class="chart-box"><div class="chart-title">사용자 음성 vs 영어 Reference</div><div class="chart-canvas-wrap" style="height:320px;"><canvas id="chart-word-feature-values"></canvas></div></div>
+      <div class="chart-box"><div class="chart-title">사용자 음성 vs 영어 Reference (항목별 정규화)</div><div class="chart-canvas-wrap" style="height:320px;"><canvas id="chart-word-feature-values"></canvas></div></div>
       <div class="chart-box"><div class="chart-title">Reference 대비 비율</div><div class="chart-canvas-wrap" style="height:320px;"><canvas id="chart-word-feature-ratios"></canvas></div></div>
     </div>
     <div class="table-wrap">
@@ -613,7 +613,8 @@ function renderWordCompareByKey(key) {
       </table>
     </div>
     <div class="meta-box" style="margin-top:16px;">
-      <strong>기준:</strong> reference_vectors.json의 /${escHtml(row.phoneme)}/ 평균 feature와 user_recordings의 선택 row를 비교합니다.
+      <strong>그래프 기준:</strong> 왼쪽 그래프는 단위가 다른 Duration/ZCR/RMS/Spectral을 한 화면에서 볼 수 있도록 각 항목별 최대값을 100으로 정규화합니다.
+      &nbsp;·&nbsp; <strong>실제 수치:</strong> 아래 표와 tooltip을 기준으로 확인하세요.
       &nbsp;·&nbsp; <strong>MFCC distance:</strong> ${row.mfcc_distance != null ? Number(row.mfcc_distance).toFixed(3) : "—"}
     </div>
   `;
@@ -643,17 +644,43 @@ function buildWordCompareMetrics(row, ref) {
 
 function renderWordFeatureValueChart(metrics) {
   const labels = metrics.map(m => m.label);
+  const userData = metrics.map(m => normalizeMetricValue(m.user, m.ref));
+  const refData = metrics.map(m => normalizeMetricValue(m.ref, m.user));
   _createChart("chart-word-feature-values", {
     type: "bar",
     data: {
       labels,
       datasets: [
-        { label: "내 발음", data: metrics.map(m => m.user), backgroundColor: "rgba(59,130,246,0.72)", borderColor: "#3b82f6", borderWidth: 1 },
-        { label: "Reference", data: metrics.map(m => m.ref), backgroundColor: "rgba(148,163,184,0.72)", borderColor: "#94a3b8", borderWidth: 1 },
+        { label: "내 발음", data: userData, backgroundColor: "rgba(59,130,246,0.72)", borderColor: "#3b82f6", borderWidth: 1 },
+        { label: "Reference", data: refData, backgroundColor: "rgba(148,163,184,0.72)", borderColor: "#94a3b8", borderWidth: 1 },
       ],
     },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, position: "top" } }, scales: { y: { beginAtZero: true } } },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, position: "top" },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const metric = metrics[ctx.dataIndex];
+              const rawValue = ctx.datasetIndex === 0 ? metric.user : metric.ref;
+              return ` ${ctx.dataset.label}: ${fmtMetric(rawValue, metric.unit)} (${Number(ctx.raw).toFixed(1)}%)`;
+            },
+          },
+        },
+      },
+      scales: { y: { beginAtZero: true, max: 100, title: { display: true, text: "항목별 상대 크기 (%)" } } },
+    },
   });
+}
+
+function normalizeMetricValue(value, otherValue) {
+  const v = numOrNull(value);
+  const o = numOrNull(otherValue);
+  if (v == null) return null;
+  const scale = Math.max(Math.abs(v), Math.abs(o ?? 0), 1e-12);
+  return Math.abs(v) / scale * 100;
 }
 
 function renderWordFeatureRatioChart(metrics) {
