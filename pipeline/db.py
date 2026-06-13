@@ -3,7 +3,7 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TypedDict
 
 log = logging.getLogger(__name__)
 
@@ -180,22 +180,7 @@ CREATE TABLE IF NOT EXISTS user_recordings (
     rms_mean REAL,
     zcr_mean REAL,
     spectral_centroid_mean REAL,
-    mfcc_distance REAL,
-    details_json TEXT,
-    base_score REAL,
-    final_score REAL,
-    mfcc_score REAL,
-    duration_score REAL,
-    rms_score REAL,
-    zcr_score REAL,
-    spectral_centroid_score REAL,
-    quality_penalty REAL,
-    pronunciation_penalty REAL,
-    total_penalty REAL,
-    duration_penalty REAL,
-    volume_penalty REAL,
-    noise_penalty REAL,
-    duration_ratio REAL
+    mfcc_distance REAL
 )
 """
 
@@ -208,21 +193,6 @@ _USER_RECORDINGS_OPTIONAL_COLUMNS: list[tuple[str, str]] = [
     ("zcr_mean", "REAL"),
     ("spectral_centroid_mean", "REAL"),
     ("mfcc_distance", "REAL"),
-    ("details_json", "TEXT"),
-    ("base_score", "REAL"),
-    ("final_score", "REAL"),
-    ("mfcc_score", "REAL"),
-    ("duration_score", "REAL"),
-    ("rms_score", "REAL"),
-    ("zcr_score", "REAL"),
-    ("spectral_centroid_score", "REAL"),
-    ("quality_penalty", "REAL"),
-    ("pronunciation_penalty", "REAL"),
-    ("total_penalty", "REAL"),
-    ("duration_penalty", "REAL"),
-    ("volume_penalty", "REAL"),
-    ("noise_penalty", "REAL"),
-    ("duration_ratio", "REAL"),
 ]
 
 
@@ -242,24 +212,6 @@ def ensure_user_recordings_table(db_path: str | Path = DEFAULT_DB_PATH) -> None:
         conn.commit()
 
 
-def _metric_from_details(details: dict[str, Any] | None, key: str) -> float | None:
-    if not details:
-        return None
-    value = details.get(key)
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _details_to_json(details: dict[str, Any] | None) -> str | None:
-    if not details:
-        return None
-    return json.dumps(details, ensure_ascii=False, sort_keys=True)
-
-
 def save_user_recording_result(
     *,
     word: str,
@@ -274,7 +226,6 @@ def save_user_recording_result(
     zcr_mean: float | None = None,
     spectral_centroid_mean: float | None = None,
     mfcc_distance: float | None = None,
-    details: dict[str, Any] | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> None:
     """사용자 녹음 결과를 user_recordings 테이블에 저장한다.
@@ -283,20 +234,10 @@ def save_user_recording_result(
 
     Args:
         test_label: 테스트 라벨. ENABLE_TEST_LABELS=false이면 None(NULL)으로 저장한다.
-        details: scorer.py가 반환한 세부 점수와 penalty 정보.
     """
     try:
         ensure_user_recordings_table(db_path)
         created_at = datetime.now(timezone.utc).isoformat()
-        final_score = _metric_from_details(details, "final_score")
-        if final_score is None and score is not None:
-            final_score = float(score)
-
-        total_penalty = _metric_from_details(details, "total_penalty")
-        if total_penalty is None:
-            quality = _metric_from_details(details, "quality_penalty") or 0.0
-            pronunciation = _metric_from_details(details, "pronunciation_penalty") or 0.0
-            total_penalty = quality + pronunciation
 
         with get_connection(db_path) as conn:
             conn.execute(
@@ -304,42 +245,13 @@ def save_user_recording_result(
                 INSERT INTO user_recordings (
                     created_at, word, phoneme, score, grade, feedback,
                     recording_path, test_label,
-                    duration_ms, rms_mean, zcr_mean, spectral_centroid_mean, mfcc_distance,
-                    details_json, base_score, final_score,
-                    mfcc_score, duration_score, rms_score, zcr_score, spectral_centroid_score,
-                    quality_penalty, pronunciation_penalty, total_penalty,
-                    duration_penalty, volume_penalty, noise_penalty, duration_ratio
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    duration_ms, rms_mean, zcr_mean, spectral_centroid_mean, mfcc_distance
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    created_at,
-                    word,
-                    phoneme,
-                    score,
-                    grade,
-                    feedback,
-                    recording_path,
-                    test_label,
-                    duration_ms,
-                    rms_mean,
-                    zcr_mean,
-                    spectral_centroid_mean,
-                    mfcc_distance,
-                    _details_to_json(details),
-                    _metric_from_details(details, "base_score"),
-                    final_score,
-                    _metric_from_details(details, "mfcc_score"),
-                    _metric_from_details(details, "duration_score"),
-                    _metric_from_details(details, "rms_score"),
-                    _metric_from_details(details, "zcr_score"),
-                    _metric_from_details(details, "spectral_centroid_score"),
-                    _metric_from_details(details, "quality_penalty"),
-                    _metric_from_details(details, "pronunciation_penalty"),
-                    total_penalty,
-                    _metric_from_details(details, "duration_penalty"),
-                    _metric_from_details(details, "volume_penalty"),
-                    _metric_from_details(details, "noise_penalty"),
-                    _metric_from_details(details, "duration_ratio"),
+                    created_at, word, phoneme, score, grade, feedback,
+                    recording_path, test_label,
+                    duration_ms, rms_mean, zcr_mean, spectral_centroid_mean, mfcc_distance,
                 ),
             )
             conn.commit()
