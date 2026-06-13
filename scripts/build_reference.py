@@ -22,9 +22,7 @@ SUPPORTED_AUDIO_EXTENSIONS = [".wav", ".mp3", ".m4a"]
 MVP_PHONEMES = {"θ", "i", "iː", "æ", "ə", "f", "v", "r", "l", "oʊ"}
 VOWEL_PHONEMES = {"i", "iː", "æ", "ə", "oʊ"}
 CONSONANT_PHONEMES = {"θ", "f", "v", "r", "l"}
-VECTOR_FEATURE_KEYS = (
-    "mfcc_mean",
-    "mfcc_std",
+SEQUENCE_FEATURE_KEYS = (
     "mfcc_start_mean",
     "mfcc_middle_mean",
     "mfcc_end_mean",
@@ -42,14 +40,17 @@ def load_word_entries(words_path: Path) -> list[dict]:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
+
             parts = [part.strip() for part in line.split(",")]
             if len(parts) != 3:
                 raise ValueError(
                     f"Invalid format at line {line_number}: {line}\n"
                     "Expected format: word,korean_pronunciation,phoneme"
                 )
+
             word, korean_pronunciation, phoneme = parts
             entries.append({"word": word, "korean_pronunciation": korean_pronunciation, "phoneme": phoneme})
+
     return entries
 
 
@@ -64,12 +65,11 @@ def get_phoneme_type(phoneme: str) -> str:
 def find_audio_files(reference_audio_dir: Path, word: str) -> list[Path]:
     audio_files = []
     for ext in SUPPORTED_AUDIO_EXTENSIONS:
-        pattern = f"*/{word}{ext}"
-        audio_files.extend(reference_audio_dir.glob(pattern))
+        audio_files.extend(reference_audio_dir.glob(f"*/{word}{ext}"))
     return sorted(audio_files)
 
 
-def _aggregate_vector(samples: list[dict], key: str) -> tuple[list[float], list[float]] | None:
+def _aggregate_feature(samples: list[dict], key: str) -> tuple[list[float], list[float]] | None:
     values = [sample[key] for sample in samples if key in sample]
     if not values:
         return None
@@ -78,12 +78,15 @@ def _aggregate_vector(samples: list[dict], key: str) -> tuple[list[float], list[
 
 
 def aggregate_reference_vectors(samples: list[dict]) -> dict:
+    mfcc_values = np.array([sample["mfcc_mean"] for sample in samples], dtype=float)
     zcr_values = np.array([sample["zcr_mean"] for sample in samples], dtype=float)
     duration_values = np.array([sample["duration_ms"] for sample in samples], dtype=float)
     rms_values = np.array([sample["rms_mean"] for sample in samples], dtype=float)
     centroid_values = np.array([sample["spectral_centroid_mean"] for sample in samples], dtype=float)
 
     vector = {
+        "mfcc_mean": np.mean(mfcc_values, axis=0).round(6).tolist(),
+        "mfcc_std": np.std(mfcc_values, axis=0).round(6).tolist(),
         "zcr_mean": round(float(np.mean(zcr_values)), 6),
         "zcr_std": round(float(np.std(zcr_values)), 6),
         "duration_ms": round(float(np.mean(duration_values)), 2),
@@ -95,8 +98,8 @@ def aggregate_reference_vectors(samples: list[dict]) -> dict:
         "sample_count": len(samples),
     }
 
-    for key in VECTOR_FEATURE_KEYS:
-        aggregated = _aggregate_vector(samples, key)
+    for key in SEQUENCE_FEATURE_KEYS:
+        aggregated = _aggregate_feature(samples, key)
         if aggregated is None:
             continue
         mean_values, std_values = aggregated
