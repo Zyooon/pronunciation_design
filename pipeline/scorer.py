@@ -1,12 +1,15 @@
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import numpy as np
+
+from pipeline.quality import RecordingQualityResult, evaluate_recording_quality
 
 
 EPSILON = 1e-8
 
-AudioFeatures = dict[str, float | list[float]]
+AudioFeatures = dict[str, Any]
 ReferenceVector = dict[str, float | list[float] | str]
+ScoreDetailValue = float | str | list[str] | bool | None
 
 _LIQUID_PHONEMES: frozenset[str] = frozenset({"r", "l"})
 _DURATION_FOCUSED_PHONEMES: frozenset[str] = frozenset({"i", "iː"})
@@ -49,11 +52,17 @@ _LIQUID_ALT_SCORE_SEVERE = 42.0
 _LIQUID_ALT_PENALTY_MULTIPLIER = 0.70
 _LIQUID_ALT_PENALTY_MAX = 14.0
 
+_QUALITY_GATE_FEEDBACK = "녹음 품질이 낮아 발음 점수를 신뢰하기 어렵습니다. 다시 녹음해주세요."
+_WORD_MISMATCH_FEEDBACK = "녹음된 단어가 목표 단어와 달라 발음 점수를 신뢰하기 어렵습니다. 목표 단어를 다시 녹음해주세요."
+
 
 class ScoreResult(TypedDict):
-    score: float
+    score: float | None
+    pronunciation_score: float | None
+    recording_quality_status: str
+    issue_flags: list[str]
     feedback: str
-    details: dict[str, float]
+    details: dict[str, ScoreDetailValue]
 
 
 def sigmoid_score(diff_ratio: float, steepness: float = 5.0, tolerance: float = 0.3) -> float:
@@ -373,13 +382,65 @@ def _build_phoneme_score_details(
     return {"score": round(float(mfcc_score), 1), "mfcc_score": round(float(mfcc_score), 1)}
 
 
+def _coerce_issue_flags(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(flag) for flag in value]
+    return []
+
+
+def _get_recording_quality_result(
+    user_features: AudioFeatures,
+    reference: ReferenceVector,
+    recording_quality_result: RecordingQualityResult | None,
+) -> RecordingQualityResult:
+    if recording_quality_result is not None:
+        return recording_quality_result
+
+    status = user_features.get("recording_quality_status")
+    if status in ("ok", "bad"):
+        return {
+            "status": status,
+            "issue_flags": _coerce_issue_flags(user_features.get("issue_flags")),
+            "word_match": user_features.get("word_match") if isinstance(user_features.get("word_match"), bool) else None,
+        }
+
+    return evaluate_recording_quality(user_features, reference)
+
+
+def _get_quality_gate_feedback(issue_flags: list[str]) -> str:
+    if "word_mismatch" in issue_flags:
+        return _WORD_MISMATCH_FEEDBACK
+    return _QUALITY_GATE_FEEDBACK
+
+
+def _build_quality_gate_result(quality_result: RecordingQualityResult) -> ScoreResult:
+    issue_flags = quality_result["issue_flags"]
+    return {
+        "score": None,
+        "pronunciation_score": None,
+        "recording_quality_status": quality_result["status"],
+        "issue_flags": issue_flags,
+        "feedback": _get_quality_gate_feedback(issue_flags),
+        "details": {
+            "recording_quality_status": quality_result["status"],
+            "issue_flags": issue_flags,
+            "word_match": quality_result["word_match"],
+        },
+    }
+
+
 def score_pronunciation(
     user_features: AudioFeatures,
     reference: ReferenceVector,
     phoneme: str,
     ko_reference: ReferenceVector | None = None,
     liquid_alt_reference: ReferenceVector | None = None,
+    recording_quality_result: RecordingQualityResult | None = None,
 ) -> ScoreResult:
+    quality_result = _get_recording_quality_result(user_features, reference, recording_quality_result)
+    if quality_result["status"] == "bad":
+        return _build_quality_gate_result(quality_result)
+
     phoneme_type = str(reference.get("phoneme_type", "unknown"))
     sub_scores = _build_phoneme_score_details(user_features, reference, phoneme_type, phoneme)
     base_score = float(sub_scores.pop("score"))
@@ -390,13 +451,6 @@ def score_pronunciation(
     spectral_centroid_mean = float(user_features.get("spectral_centroid_mean", 0))
     ref_duration_ms = float(reference.get("duration_ms", 500))
 
-    duration_penalty, volume_penalty, noise_penalty = compute_quality_penalty(
-        duration_ms,
-        rms_mean,
-        zcr_mean,
-        ref_duration_ms,
-    )
-    quality_penalty = duration_penalty + volume_penalty + noise_penalty
     pronunciation_penalty = compute_pronunciation_penalty(sub_scores, phoneme_type)
 
     if phoneme in _DURATION_FOCUSED_PHONEMES or phoneme in _LIQUID_PHONEMES:
@@ -413,20 +467,20 @@ def score_pronunciation(
     mismatch_penalty = compute_mismatch_penalty(base_score, ko_metrics)
     liquid_alt_penalty = liquid_alt_metrics.get("liquid_alt_penalty", 0.0)
 
-    total_penalty = quality_penalty + pronunciation_penalty + korean_like_penalty + mismatch_penalty + liquid_alt_penalty
+    total_penalty = pronunciation_penalty + korean_like_penalty + mismatch_penalty + liquid_alt_penalty
     duration_ratio = duration_ms / (ref_duration_ms + EPSILON)
     final_score = float(np.clip(base_score - total_penalty, 0.0, 100.0))
     feedback = get_feedback(final_score, phoneme, phoneme_type)
 
-    details: dict[str, float] = {
+    details: dict[str, ScoreDetailValue] = {
         **sub_scores,
         **ko_metrics,
         **liquid_alt_metrics,
         "base_score": round(base_score, 1),
-        "quality_penalty": round(quality_penalty, 1),
-        "duration_penalty": round(duration_penalty, 1),
-        "volume_penalty": round(volume_penalty, 1),
-        "noise_penalty": round(noise_penalty, 1),
+        "quality_penalty": 0.0,
+        "recording_quality_status": quality_result["status"],
+        "issue_flags": quality_result["issue_flags"],
+        "word_match": quality_result["word_match"],
         "pronunciation_penalty": round(pronunciation_penalty, 1),
         "mismatch_penalty": round(mismatch_penalty, 1),
         "liquid_alt_penalty": round(liquid_alt_penalty, 1),
@@ -438,4 +492,11 @@ def score_pronunciation(
         "spectral_centroid_mean": round(spectral_centroid_mean, 2),
     }
 
-    return {"score": round(final_score, 1), "feedback": feedback, "details": details}
+    return {
+        "score": round(final_score, 1),
+        "pronunciation_score": round(final_score, 1),
+        "recording_quality_status": quality_result["status"],
+        "issue_flags": quality_result["issue_flags"],
+        "feedback": feedback,
+        "details": details,
+    }
