@@ -17,13 +17,14 @@ _KO_REFERENCE_PHONEMES: frozenset[str] = frozenset({"θ", "v", "æ", "f"})
 
 _MFCC_LOW_THRESHOLD = 55.0
 _DURATION_LOW_THRESHOLD = 45.0
+_DURATION_VERY_LOW_THRESHOLD = 35.0
 _CENTROID_LOW_THRESHOLD = 45.0
 _ZCR_LOW_THRESHOLD = 45.0
 
-_KO_RELATIVE_PENALTY_START = 50.0
-_KO_RELATIVE_PENALTY_STRONG = 45.0
-_KO_RELATIVE_PENALTY_MULTIPLIER = 0.55
-_KO_RELATIVE_PENALTY_MAX = 12.0
+_KO_RELATIVE_PENALTY_START = 55.0
+_KO_RELATIVE_PENALTY_STRONG = 48.0
+_KO_RELATIVE_PENALTY_MULTIPLIER = 0.8
+_KO_RELATIVE_PENALTY_MAX = 15.0
 
 _LIQUID_ALT_SCORE_START = 50.0
 _LIQUID_ALT_SCORE_STRONG = 44.0
@@ -101,7 +102,7 @@ def compute_ko_reference_metrics(
         (_KO_RELATIVE_PENALTY_START - relative_distance_score) * _KO_RELATIVE_PENALTY_MULTIPLIER,
     )
     if relative_distance_score < _KO_RELATIVE_PENALTY_STRONG:
-        korean_like_penalty += 2.0
+        korean_like_penalty += 3.0
     korean_like_penalty = float(np.clip(korean_like_penalty, 0.0, _KO_RELATIVE_PENALTY_MAX))
 
     return {
@@ -211,7 +212,9 @@ def compute_pronunciation_penalty(sub_scores: dict[str, float], phoneme_type: st
     if mfcc_score < _MFCC_LOW_THRESHOLD:
         penalty += 7.0
     if duration_score < _DURATION_LOW_THRESHOLD:
-        penalty += 4.0
+        penalty += 8.0 if phoneme_type == "vowel" else 4.0
+        if phoneme_type == "vowel" and duration_score < _DURATION_VERY_LOW_THRESHOLD:
+            penalty += 3.0
     if centroid_score < _CENTROID_LOW_THRESHOLD:
         penalty += 3.0
     if phoneme_type == "consonant" and zcr_score < _ZCR_LOW_THRESHOLD:
