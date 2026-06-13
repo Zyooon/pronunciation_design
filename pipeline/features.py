@@ -4,6 +4,9 @@ import numpy as np
 
 N_MFCC = 13
 MFCC_SEGMENT_NAMES = ("start", "middle", "end")
+DEFAULT_ONSET_WINDOW_MS = 200.0
+
+FeatureValue = float | list[float]
 
 
 def _to_float_list(values: np.ndarray) -> list[float]:
@@ -14,6 +17,17 @@ def _extract_mfcc_frames(waveform: np.ndarray, sr: int, n_mfcc: int = N_MFCC) ->
     if len(waveform) == 0:
         raise ValueError("Input audio is empty.")
     return librosa.feature.mfcc(y=waveform, sr=sr, n_mfcc=n_mfcc)
+
+
+def _slice_onset_window(waveform: np.ndarray, sr: int, window_ms: float = DEFAULT_ONSET_WINDOW_MS) -> np.ndarray:
+    if len(waveform) == 0:
+        raise ValueError("Input audio is empty.")
+    if sr <= 0:
+        raise ValueError("Sample rate must be positive.")
+
+    window_samples = int(sr * window_ms / 1000)
+    window_samples = max(1, min(len(waveform), window_samples))
+    return waveform[:window_samples]
 
 
 def extract_mfcc(waveform: np.ndarray, sr: int, n_mfcc: int = N_MFCC) -> np.ndarray:
@@ -76,12 +90,48 @@ def extract_spectral_centroid(waveform: np.ndarray, sr: int) -> float:
     return float(np.mean(librosa.feature.spectral_centroid(y=waveform, sr=sr)))
 
 
-def extract_features(waveform: np.ndarray, sr: int) -> dict[str, float | list[float]]:
-    """채점과 reference vector 생성에 사용할 특징 dict를 반환합니다."""
+def extract_onset_window_features(
+    waveform: np.ndarray,
+    sr: int,
+    window_ms: float = DEFAULT_ONSET_WINDOW_MS,
+) -> dict[str, FeatureValue]:
+    """trim 이후 오디오의 앞쪽 고정 시간 window 특징을 추출합니다.
+
+    단어 전체 평균 feature로 희석되는 onset 자음(/r/, /l/, /θ/, /f/, /v/)의
+    분리 신호를 확인하기 위한 분석용 feature입니다. 현재 scorer 점수에는
+    직접 반영하지 않고 CSV/DB details 분석에 사용합니다.
+    """
+    onset_waveform = _slice_onset_window(waveform, sr, window_ms)
+    actual_window_ms = extract_duration_ms(onset_waveform, sr)
+
     return {
+        "onset_window_ms": actual_window_ms,
+        "onset_mfcc_mean": _to_float_list(extract_mfcc(onset_waveform, sr)),
+        "onset_zcr_mean": extract_zcr(onset_waveform),
+        "onset_rms_mean": extract_rms(onset_waveform),
+        "onset_spectral_centroid_mean": extract_spectral_centroid(onset_waveform, sr),
+    }
+
+
+def extract_features(
+    waveform: np.ndarray,
+    sr: int,
+    *,
+    include_onset: bool = False,
+    onset_window_ms: float = DEFAULT_ONSET_WINDOW_MS,
+) -> dict[str, FeatureValue]:
+    """채점과 reference vector 생성에 사용할 특징 dict를 반환합니다.
+
+    include_onset=False를 기본값으로 둬 기존 reference vector 생성 기준선을 유지합니다.
+    onset feature는 재채점/분석 루프에서 onset target 단어에만 명시적으로 켭니다.
+    """
+    features: dict[str, FeatureValue] = {
         **extract_mfcc_time_features(waveform, sr),
         "zcr_mean": extract_zcr(waveform),
         "duration_ms": extract_duration_ms(waveform, sr),
         "rms_mean": extract_rms(waveform),
         "spectral_centroid_mean": extract_spectral_centroid(waveform, sr),
     }
+    if include_onset:
+        features.update(extract_onset_window_features(waveform, sr, onset_window_ms=onset_window_ms))
+    return features
