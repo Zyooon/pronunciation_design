@@ -275,6 +275,7 @@ def save_user_recording_result(
     spectral_centroid_mean: float | None = None,
     mfcc_distance: float | None = None,
     details: dict[str, Any] | None = None,
+    created_at: str | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> None:
     """사용자 녹음 결과를 user_recordings 테이블에 저장한다.
@@ -284,10 +285,12 @@ def save_user_recording_result(
     Args:
         test_label: 테스트 라벨. ENABLE_TEST_LABELS=false이면 None(NULL)으로 저장한다.
         details: scorer.py가 반환한 세부 점수와 penalty 정보.
+        created_at: 명시적 생성 시각(ISO 문자열). None이면 현재 UTC 시간을 사용한다.
+                    재채점 시 원본 녹음의 created_at을 유지하기 위해 사용한다.
     """
     try:
         ensure_user_recordings_table(db_path)
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at_value = created_at or datetime.now(timezone.utc).isoformat()
         final_score = _metric_from_details(details, "final_score")
         if final_score is None and score is not None:
             final_score = float(score)
@@ -312,7 +315,7 @@ def save_user_recording_result(
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    created_at,
+                    created_at_value,
                     word,
                     phoneme,
                     score,

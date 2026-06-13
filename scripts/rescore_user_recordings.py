@@ -39,7 +39,14 @@ def fetch_latest_rows(conn: sqlite3.Connection, labels: list[str] | None, limit:
         params.extend(labels)
     limit_sql = f"LIMIT {limit}" if limit else ""
     sql = f"""
-        SELECT *
+        SELECT
+            u.*,
+            (
+                SELECT MIN(created_at)
+                FROM user_recordings
+                WHERE recording_path = u.recording_path
+                  AND created_at IS NOT NULL
+            ) AS original_created_at
         FROM user_recordings u
         WHERE id = (
             SELECT MAX(id)
@@ -99,11 +106,13 @@ def rescore_row(row: sqlite3.Row, en_vectors: dict, ko_vectors: dict, dry_run: b
     score = score_result["score"]
     details = score_result.get("details", {})
 
+    original_created_at = row["original_created_at"] or row["created_at"]
+
     if dry_run:
         log.info(
-            "[dry-run] id=%s word=%s label=%s old=%s new=%.1f ko_penalty=%.1f",
+            "[dry-run] id=%s word=%s label=%s old=%s new=%.1f ko_penalty=%.1f original_created_at=%s",
             row["id"], word, row["test_label"] or "NULL", row["score"], score,
-            details.get("korean_like_penalty", 0.0),
+            details.get("korean_like_penalty", 0.0), original_created_at,
         )
         return "dry_run"
 
@@ -121,6 +130,7 @@ def rescore_row(row: sqlite3.Row, en_vectors: dict, ko_vectors: dict, dry_run: b
         spectral_centroid_mean=features.get("spectral_centroid_mean"),
         mfcc_distance=compute_mfcc_distance(features.get("mfcc_mean"), reference.get("mfcc_mean")),
         details=details,
+        created_at=original_created_at,
     )
     log.info("저장 완료: id=%s word=%s label=%s new=%.1f", row["id"], word, row["test_label"] or "NULL", score)
     return "ok"
