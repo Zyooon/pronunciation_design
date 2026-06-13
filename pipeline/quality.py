@@ -131,55 +131,46 @@ def _judge_transcript(transcript: str, normalized_target: str) -> bool | None:
     return None
 
 
+def _build_word_match_result(
+    word_match: bool | None,
+    stt_status: SttStatus,
+    transcript: str | None,
+    prompted_transcript: str | None,
+) -> WordMatchResult:
+    return {
+        "word_match": word_match,
+        "stt_status": stt_status,
+        "transcript": transcript,
+        "prompted_transcript": prompted_transcript,
+    }
+
+
 def check_word_match_detail(audio_path: str, target_word: str) -> WordMatchResult:
     """STT 2-pass 방식으로 목표 단어 일치 여부를 확인한다.
 
-    1차는 prompt 없이 판단해서 wrong word 차단력을 유지한다.
-    1차가 애매할 때만 target_word prompt를 넣어 단음절 false negative를 완화한다.
+    1차는 prompt 없이 판단한다. 단, 1차 mismatch도 즉시 차단하지 않고
+    target_word prompt로 한 번 더 확인해 정상 단어 false negative를 줄인다.
     """
     normalized_target = _normalize_text(target_word).replace(" ", "")
     if not normalized_target:
-        return {
-            "word_match": None,
-            "stt_status": "unavailable",
-            "transcript": None,
-            "prompted_transcript": None,
-        }
+        return _build_word_match_result(None, "unavailable", None, None)
 
     try:
         transcript = _transcribe_audio(audio_path)
         first_pass_match = _judge_transcript(transcript, normalized_target)
         if first_pass_match is True:
-            return {
-                "word_match": True,
-                "stt_status": "matched",
-                "transcript": transcript,
-                "prompted_transcript": None,
-            }
-        if first_pass_match is False:
-            return {
-                "word_match": False,
-                "stt_status": "mismatched",
-                "transcript": transcript,
-                "prompted_transcript": None,
-            }
+            return _build_word_match_result(True, "matched", transcript, None)
 
         prompted_transcript = _transcribe_audio(audio_path, target_word=target_word)
         prompted_match = _judge_transcript(prompted_transcript, normalized_target)
+        if first_pass_match is False and prompted_match is True:
+            return _build_word_match_result(None, "uncertain", transcript, prompted_transcript)
+        if first_pass_match is False:
+            return _build_word_match_result(False, "mismatched", transcript, prompted_transcript)
         if prompted_match is True:
-            return {
-                "word_match": True,
-                "stt_status": "matched",
-                "transcript": transcript,
-                "prompted_transcript": prompted_transcript,
-            }
+            return _build_word_match_result(True, "matched", transcript, prompted_transcript)
 
-        return {
-            "word_match": None,
-            "stt_status": "uncertain",
-            "transcript": transcript,
-            "prompted_transcript": prompted_transcript,
-        }
+        return _build_word_match_result(None, "uncertain", transcript, prompted_transcript)
     except Exception:
         log.warning(
             "STT word match 확인 실패 (fail open): audio_path=%s, target_word=%s",
@@ -187,12 +178,7 @@ def check_word_match_detail(audio_path: str, target_word: str) -> WordMatchResul
             target_word,
             exc_info=True,
         )
-        return {
-            "word_match": None,
-            "stt_status": "unavailable",
-            "transcript": None,
-            "prompted_transcript": None,
-        }
+        return _build_word_match_result(None, "unavailable", None, None)
 
 
 def check_word_match(audio_path: str, target_word: str) -> bool | None:
