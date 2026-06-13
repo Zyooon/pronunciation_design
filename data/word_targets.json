@@ -1,0 +1,52 @@
+{
+  "road|r": {
+    "word": "road",
+    "target_phoneme": "r",
+    "position": "onset"
+  },
+  "rice|r": {
+    "word": "rice",
+    "target_phoneme": "r",
+    "position": "onset"
+  },
+  "load|l": {
+    "word": "load",
+    "target_phoneme": "l",
+    "position": "onset"
+  },
+  "lice|l": {
+    "word": "lice",
+    "target_phoneme": "l",
+    "position": "onset"
+  },
+  "think|θ": {
+    "word": "think",
+    "target_phoneme": "θ",
+    "position": "onset"
+  },
+  "thick|θ": {
+    "word": "thick",
+    "target_phoneme": "θ",
+    "position": "onset"
+  },
+  "fan|f": {
+    "word": "fan",
+    "target_phoneme": "f",
+    "position": "onset"
+  },
+  "fix|f": {
+    "word": "fix",
+    "target_phoneme": "f",
+    "position": "onset"
+  },
+  "van|v": {
+    "word": "van",
+    "target_phoneme": "v",
+    "position": "onset"
+  },
+  "vast|v": {
+    "word": "vast",
+    "target_phoneme": "v",
+    "position": "onset"
+  }
+}
