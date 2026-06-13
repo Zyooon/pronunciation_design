@@ -450,6 +450,8 @@ async function loadUserResults() {
       `<tr>${columns.map((c) => `<td>${escHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
     ).join("");
 
+    const labelSummaryHtml = _renderLabelSummary(data.label_summary);
+
     wrap.innerHTML = `
       <div class="meta-box">
         <strong>table:</strong> ${escHtml(data.table ?? "")}
@@ -458,6 +460,7 @@ async function loadUserResults() {
         &nbsp;·&nbsp;
         <strong>표시:</strong> 최근 ${data.rows.length}개
       </div>
+      ${labelSummaryHtml}
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr>${theadHtml}</tr></thead>
@@ -470,6 +473,18 @@ async function loadUserResults() {
 }
 
 // ── 유틸 ─────────────────────────────────────────────────────────────────────
+
+function _renderLabelSummary(summary) {
+  if (!summary || !summary.length) return "";
+  const cells = summary.map((s) => {
+    const label = s.test_label ?? "NULL";
+    const avg   = s.avg_score != null ? s.avg_score : "—";
+    return `<span class="pill pill-ok" style="margin-right:6px;">
+      <strong>${escHtml(String(label))}</strong>: ${s.count}건 · avg ${avg}
+    </span>`;
+  }).join("");
+  return `<div class="meta-box" style="margin-top:6px;">${cells}</div>`;
+}
 
 function escHtml(str) {
   return String(str ?? "")

@@ -3,10 +3,11 @@
  */
 
 // ── 상태 ──────────────────────────────────────────────
-let selectedWord = null;   // { word, korean_pronunciation, phoneme }
-let recordedBlob = null;   // Blob | null
-let uploadedFile = null;   // File | null
-let allWords     = [];     // 전체 단어 목록 (발음 필터링용)
+let selectedWord      = null;         // { word, korean_pronunciation, phoneme }
+let recordedBlob      = null;         // Blob | null
+let uploadedFile      = null;         // File | null
+let allWords          = [];           // 전체 단어 목록 (발음 필터링용)
+let selectedTestLabel = "unlabeled";  // 테스트 라벨 (ENABLE_TEST_LABELS=true 시 사용)
 
 // ── DOM 참조 ──────────────────────────────────────────
 const phonemeSelect    = document.getElementById("phoneme-select");
@@ -34,8 +35,15 @@ document.addEventListener("DOMContentLoaded", initApp);
 
 async function initApp() {
   checkBrowserSupport();
+  initTestLabelUi();
   await loadWordList();
   bindEvents();
+}
+
+function initTestLabelUi() {
+  if (typeof ENABLE_TEST_LABELS === "undefined" || !ENABLE_TEST_LABELS) return;
+  const section = document.getElementById("test-label-section");
+  if (section) section.style.display = "";
 }
 
 function checkBrowserSupport() {
@@ -149,6 +157,13 @@ function bindEvents() {
   btnAnalyze.addEventListener("click", onAnalyzeClick);
   btnRetry.addEventListener("click", onRetryClick);
   document.addEventListener("recordingcomplete", onRecordingComplete);
+
+  const testLabelSelect = document.getElementById("test-label-select");
+  if (testLabelSelect) {
+    testLabelSelect.addEventListener("change", (e) => {
+      selectedTestLabel = e.target.value || "unlabeled";
+    });
+  }
 }
 
 // ── 파일 업로드 ───────────────────────────────────────
@@ -276,6 +291,9 @@ async function onAnalyzeClick() {
     formData.append("word",    selectedWord.word);
     formData.append("phoneme", selectedWord.phoneme);
     formData.append("audio_file", audioBlob, getAudioFilename(audioBlob));
+    if (typeof ENABLE_TEST_LABELS !== "undefined" && ENABLE_TEST_LABELS) {
+      formData.append("test_label", selectedTestLabel || "unlabeled");
+    }
 
     const result = await analyzePronunciation(formData);
     showResult(result);

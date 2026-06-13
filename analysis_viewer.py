@@ -154,6 +154,7 @@ def load_user_results_from_db(
         "row_count": 0,
         "columns": [],
         "rows": [],
+        "label_summary": [],
         "error": None,
     }
 
@@ -187,9 +188,20 @@ def load_user_results_from_db(
             f"SELECT COUNT(*) FROM {USER_RECORDINGS_TABLE}"
         ).fetchone()[0]
 
+        label_summary = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT test_label, COUNT(*) AS count, "
+                "ROUND(AVG(score), 1) AS avg_score "
+                f"FROM {USER_RECORDINGS_TABLE} "
+                "GROUP BY test_label ORDER BY test_label"
+            )
+        ]
+
         result["row_count"] = total
         result["columns"] = USER_RECORDINGS_COLUMNS
         result["rows"] = rows
+        result["label_summary"] = label_summary
         return result
 
     except sqlite3.Error as e:

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -13,4 +14,8 @@ templates = Jinja2Templates(directory=PROJECT_ROOT / "templates")
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
     """메인 발음 연습 화면을 렌더링한다."""
-    return templates.TemplateResponse(request, "index.html")
+    enable_test_labels = os.getenv("ENABLE_TEST_LABELS", "true").lower() == "true"
+    return templates.TemplateResponse(
+        request, "index.html",
+        {"enable_test_labels": enable_test_labels},
+    )

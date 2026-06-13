@@ -1,5 +1,8 @@
 import json
 import logging
+import os
+import re
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, UploadFile
@@ -12,6 +15,10 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 _RECORD_SAVE_DIR = Path("data/reference_ko/record")
+
+ALLOWED_TEST_LABELS: frozenset[str] = frozenset(
+    {"unlabeled", "good", "korean_like", "wrong_or_noisy"}
+)
 
 
 @router.get("/words")
@@ -27,6 +34,7 @@ async def analyze_pronunciation(
     word: str = Form(...),
     phoneme: str = Form(...),
     audio_file: UploadFile = File(...),
+    test_label: str = Form("unlabeled"),
 ) -> Response:
     """업로드된 음성 파일을 분석하고 채점 결과를 반환한다."""
     word = word.strip()
@@ -42,7 +50,8 @@ async def analyze_pronunciation(
         return _error_response(400, "음성 파일이 비어 있습니다.")
 
     suffix = _safe_suffix(audio_file.filename)
-    save_path = _save_record_audio(audio_bytes, word, suffix)
+    normalized_label = normalize_test_label(test_label, enabled=_is_test_labels_enabled())
+    save_path = _save_record_audio(audio_bytes, word, suffix, test_label=normalized_label)
 
     try:
         result = analyze_audio(word=word, phoneme=phoneme, audio_path=save_path)
@@ -54,6 +63,7 @@ async def analyze_pronunciation(
             grade=_derive_grade(result.score),
             feedback=result.feedback,
             recording_path=str(save_path),
+            test_label=normalized_label,
         )
 
         body = json.dumps(result.to_dict(), ensure_ascii=False)
@@ -85,6 +95,23 @@ async def analyze_pronunciation(
 
 # ── 헬퍼 ────────────────────────────────────────────────────────────────────
 
+def _is_test_labels_enabled() -> bool:
+    return os.getenv("ENABLE_TEST_LABELS", "true").lower() == "true"
+
+
+def normalize_test_label(value: str | None, *, enabled: bool) -> str | None:
+    """test_label을 정규화한다.
+
+    enabled=False이면 무조건 None을 반환한다.
+    enabled=True이고 허용 값이면 그대로 반환, 아니면 'unlabeled'로 처리한다.
+    """
+    if not enabled:
+        return None
+    if value in ALLOWED_TEST_LABELS:
+        return value
+    return "unlabeled"
+
+
 def _derive_grade(score: float) -> str:
     if score >= 85:
         return "Excellent"
@@ -93,21 +120,42 @@ def _derive_grade(score: float) -> str:
     return "Needs Practice"
 
 
-def _save_record_audio(data: bytes, word: str, suffix: str) -> Path:
-    """오디오 bytes를 data/reference_ko/record/{word}{suffix}로 저장하고 경로를 반환한다."""
-    _RECORD_SAVE_DIR.mkdir(parents=True, exist_ok=True)
-    save_path = _RECORD_SAVE_DIR / f"{word}{suffix}"
+def _safe_word_for_filename(word: str) -> str:
+    """단어에서 파일명에 안전한 문자열을 만든다."""
+    return re.sub(r"[^\w-]", "_", word).strip("_") or "word"
+
+
+def _save_record_audio(
+    data: bytes,
+    word: str,
+    suffix: str,
+    test_label: str | None = None,
+) -> Path:
+    """오디오 bytes를 라벨 기반 경로에 저장하고 경로를 반환한다.
+
+    ENABLE_TEST_LABELS=false일 때도 unlabeled/ 하위 폴더에 저장해
+    폴더 구조를 항상 일관되게 유지한다.
+    """
+    label = test_label if test_label in ALLOWED_TEST_LABELS else "unlabeled"
+    save_dir = _RECORD_SAVE_DIR / label
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_word = _safe_word_for_filename(word)
+    filename = f"{ts}_{safe_word}_{label}{suffix}"
+
+    save_path = save_dir / filename
     save_path.write_bytes(data)
     return save_path
 
 
 def _safe_suffix(filename: str | None) -> str:
-    """업로드 파일명에서 확장자를 추출한다. 없으면 .webm을 반환한다."""
+    """업로드 파일명에서 확장자를 추출한다. 없으면 .wav를 반환한다."""
     if not filename:
-        return ".webm"
+        return ".wav"
     suffix = Path(filename).suffix.lower()
     allowed = {".wav", ".mp3", ".m4a", ".webm", ".ogg"}
-    return suffix if suffix in allowed else ".webm"
+    return suffix if suffix in allowed else ".wav"
 
 
 def _error_response(status_code: int, message: str) -> Response:

@@ -220,6 +220,7 @@ def save_user_recording_result(
     grade: str | None,
     feedback: str | None,
     recording_path: str | None,
+    test_label: str | None = None,
     duration_ms: float | None = None,
     rms_mean: float | None = None,
     zcr_mean: float | None = None,
@@ -230,7 +231,9 @@ def save_user_recording_result(
     """사용자 녹음 결과를 user_recordings 테이블에 저장한다.
 
     저장 실패 시 예외를 전파하지 않고 에러 로그만 남긴다.
-    test_label은 항상 NULL로 저장한다.
+
+    Args:
+        test_label: 테스트 라벨. ENABLE_TEST_LABELS=false이면 None(NULL)으로 저장한다.
     """
     try:
         ensure_user_recordings_table(db_path)
@@ -243,11 +246,11 @@ def save_user_recording_result(
                     created_at, word, phoneme, score, grade, feedback,
                     recording_path, test_label,
                     duration_ms, rms_mean, zcr_mean, spectral_centroid_mean, mfcc_distance
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     created_at, word, phoneme, score, grade, feedback,
-                    recording_path,
+                    recording_path, test_label,
                     duration_ms, rms_mean, zcr_mean, spectral_centroid_mean, mfcc_distance,
                 ),
             )

@@ -120,6 +120,40 @@ body {
   margin-bottom: 8px;
 }
 
+/* ── 테스트 라벨 ─────────────────────────────────────────── */
+.section-test-label {
+  padding: 12px 20px 0;
+}
+
+.test-label-hint {
+  font-weight: 400;
+  font-size: 10px;
+  color: #94a3b8;
+  margin-left: 6px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.test-label-select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid #bfdbfe;
+  border-radius: 14px;
+  background-color: #fff;
+  font-size: 13px;
+  color: #334155;
+  cursor: pointer;
+  margin-top: 8px;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.test-label-select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+  outline: none;
+}
+
 /* ── 단어 선택 ─────────────────────────────────────────── */
 .section-select {
   padding-bottom: 0;

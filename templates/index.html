@@ -104,6 +104,20 @@
 
     </section>
 
+    <!-- 테스트 라벨 선택 (ENABLE_TEST_LABELS=true 시에만 표시) -->
+    <section class="section section-test-label" id="test-label-section" style="display:none;">
+      <div class="section-label">
+        테스트 라벨
+        <span class="test-label-hint">점수 계산에 사용되지 않습니다</span>
+      </div>
+      <select id="test-label-select" class="test-label-select">
+        <option value="unlabeled">unlabeled — 일반 테스트</option>
+        <option value="good">good — 영어식으로 정확하게 발음</option>
+        <option value="korean_like">korean_like — 한국어식으로 발음</option>
+        <option value="wrong_or_noisy">wrong_or_noisy — 틀린 단어 / 잡음 / 실패</option>
+      </select>
+    </section>
+
     <!-- 분석 버튼 -->
     <section class="section section-analyze">
       <button class="btn btn-analyze" id="btn-analyze" type="button" disabled>
@@ -155,6 +169,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script>const ENABLE_TEST_LABELS = {{ 'true' if enable_test_labels else 'false' }};</script>
 <script src="{{ url_for('static', path='js/api.js') }}"></script>
 <script src="{{ url_for('static', path='js/recorder.js') }}"></script>
 <script src="{{ url_for('static', path='js/app.js') }}"></script>
