@@ -305,22 +305,20 @@ function onWordRowClick(tr) {
   const panel = document.getElementById("word-detail-panel");
 
   const metrics = [
-    { name: "Duration",          en: r.en_duration_ms,              ko: r.ko_duration_ms,              ratio: r.duration_ko_en_ratio,           unit: "ms" },
-    { name: "ZCR",               en: r.en_zcr_mean,                 ko: r.ko_zcr_mean,                 ratio: r.zcr_ko_en_ratio,                unit: "" },
-    { name: "RMS",               en: r.en_rms_mean,                 ko: r.ko_rms_mean,                 ratio: r.rms_ko_en_ratio,                unit: "" },
-    { name: "Spectral Centroid", en: r.en_spectral_centroid_mean,   ko: r.ko_spectral_centroid_mean,   ratio: r.spectral_centroid_ko_en_ratio,  unit: "Hz" },
+    { name: "Duration",          en: r.en_duration_ms,            ko: r.ko_duration_ms,            ratio: r.duration_ko_en_ratio,          unit: "ms" },
+    { name: "ZCR",               en: r.en_zcr_mean,               ko: r.ko_zcr_mean,               ratio: r.zcr_ko_en_ratio,               unit: "" },
+    { name: "RMS",               en: r.en_rms_mean,               ko: r.ko_rms_mean,               ratio: r.rms_ko_en_ratio,               unit: "" },
+    { name: "Spectral Centroid", en: r.en_spectral_centroid_mean, ko: r.ko_spectral_centroid_mean, ratio: r.spectral_centroid_ko_en_ratio,  unit: "Hz" },
   ];
 
   const metricHtml = metrics.map(({ name, en, ko, ratio, unit }) => {
     const ratioStr = ratio !== null && ratio !== undefined ? `${ratio}x` : "—";
-    const enStr = en !== null && en !== undefined ? `${en}${unit ? unit : ""}` : "—";
-    const koStr = ko !== null && ko !== undefined ? `${ko}${unit ? unit : ""}` : "—";
-    const hasEnKo = en !== null && en !== undefined;
-
+    const enStr    = en  !== null && en  !== undefined ? `${en}${unit}`  : "—";
+    const koStr    = ko  !== null && ko  !== undefined ? `${ko}${unit}`  : "—";
     return `
       <div class="detail-metric-block">
         <div class="metric-name">${name}</div>
-        ${hasEnKo ? `<div class="metric-sub">EN: ${enStr} / KO: ${koStr}</div>` : ""}
+        ${en !== null && en !== undefined ? `<div class="metric-sub">EN: ${enStr} / KO: ${koStr}</div>` : ""}
         <div class="metric-sub">ko/en ratio: <strong class="${ratioCls(ratio)}">${ratioStr}</strong></div>
       </div>`;
   }).join("");
@@ -427,7 +425,10 @@ function _createChart(id, config) {
 
 const _USER_CHART_IDS = [
   "chart-label-score", "chart-score-dist",
-  "chart-phoneme-label", "chart-label-feature", "chart-row-detail",
+  "chart-phoneme-label",
+  "chart-penalty", "chart-feature-score",
+  "chart-base-final",
+  "chart-row-detail", "chart-row-bar",
 ];
 
 function _destroyUserCharts() {
@@ -436,17 +437,35 @@ function _destroyUserCharts() {
 
 // ── 라벨 색상 ─────────────────────────────────────────────────────────────────
 const _LABEL_PALETTE = {
-  good:           { bg: "rgba(16,185,129,0.7)",  radar: "rgba(16,185,129,0.15)",  border: "#10b981" },
-  korean_like:    { bg: "rgba(245,158,11,0.7)",  radar: "rgba(245,158,11,0.15)",  border: "#f59e0b" },
-  wrong_or_noisy: { bg: "rgba(239,68,68,0.7)",   radar: "rgba(239,68,68,0.15)",   border: "#ef4444" },
-  unlabeled:      { bg: "rgba(107,124,143,0.5)", radar: "rgba(107,124,143,0.1)",  border: "#6b7c8f" },
-  NULL:           { bg: "rgba(148,163,184,0.5)", radar: "rgba(148,163,184,0.1)",  border: "#94a3b8" },
+  good:           { bg: "rgba(16,185,129,0.7)",  border: "#10b981" },
+  korean_like:    { bg: "rgba(245,158,11,0.7)",  border: "#f59e0b" },
+  wrong_or_noisy: { bg: "rgba(239,68,68,0.7)",   border: "#ef4444" },
+  unlabeled:      { bg: "rgba(107,124,143,0.5)", border: "#6b7c8f" },
+  NULL:           { bg: "rgba(148,163,184,0.5)", border: "#94a3b8" },
 };
 
 function _labelColor(label, mode = "bg") {
   const key = label ?? "NULL";
   return (_LABEL_PALETTE[key] || _LABEL_PALETTE.NULL)[mode];
 }
+
+// ── penalty / feature score 컬럼 정의 ─────────────────────────────────────────
+const _PENALTY_DEFS = [
+  { key: "avg_quality_penalty",       label: "quality",       color: "#ef4444" },
+  { key: "avg_pronunciation_penalty", label: "pronunciation", color: "#f97316" },
+  { key: "avg_duration_penalty",      label: "duration",      color: "#eab308" },
+  { key: "avg_volume_penalty",        label: "volume",        color: "#8b5cf6" },
+  { key: "avg_noise_penalty",         label: "noise",         color: "#6366f1" },
+  { key: "avg_total_penalty",         label: "total",         color: "#dc2626" },
+];
+
+const _FEATURE_SCORE_DEFS = [
+  { key: "avg_mfcc_score",              label: "MFCC",     color: "#3b82f6" },
+  { key: "avg_duration_score",          label: "Duration", color: "#10b981" },
+  { key: "avg_rms_score",               label: "RMS",      color: "#8b5cf6" },
+  { key: "avg_zcr_score",               label: "ZCR",      color: "#f59e0b" },
+  { key: "avg_spectral_centroid_score", label: "Spectral", color: "#ec4899" },
+];
 
 // ── User Results ──────────────────────────────────────────────────────────────
 async function loadUserResults(latestOnly = true) {
@@ -458,54 +477,48 @@ async function loadUserResults(latestOnly = true) {
     const data = await fetchJson(`/api/user-results?latest_only=${latestOnly}`);
 
     if (!data.exists) {
-      wrap.innerHTML = `
-        <div class="no-data-msg">
-          data/pronunciation.db 파일이 없습니다.<br/>
-          앱에서 녹음 후 분석을 1회 이상 실행하면 자동으로 생성됩니다.
-        </div>`;
+      wrap.innerHTML = `<div class="no-data-msg">
+        data/pronunciation.db 파일이 없습니다.<br/>
+        앱에서 녹음 후 분석을 1회 이상 실행하면 자동으로 생성됩니다.</div>`;
       return;
     }
-
     if (data.error) {
-      wrap.innerHTML = `
-        <div class="no-data-msg">
-          DB 읽기 오류: ${escHtml(data.error)}<br/>
-          path: ${escHtml(data.path)}
-        </div>`;
+      wrap.innerHTML = `<div class="no-data-msg">DB 읽기 오류: ${escHtml(data.error)}<br/>path: ${escHtml(data.path)}</div>`;
+      return;
+    }
+    if (!data.rows || !data.rows.length) {
+      wrap.innerHTML = `<div class="no-data-msg">
+        pronunciation.db는 있지만 ${escHtml(data.table ?? "user_recordings")} 테이블에 저장된 결과가 없습니다.<br/>
+        앱에서 녹음 후 분석을 먼저 실행해보세요.</div>`;
       return;
     }
 
-    if (!data.rows || data.rows.length === 0) {
-      wrap.innerHTML = `
-        <div class="no-data-msg">
-          pronunciation.db는 있지만 ${escHtml(data.table ?? "user_recordings")} 테이블에 저장된 결과가 없습니다.<br/>
-          앱에서 녹음 후 분석을 먼저 실행해보세요.
-        </div>`;
-      return;
-    }
-
-    const columns = data.columns && data.columns.length
-      ? data.columns
-      : Object.keys(data.rows[0]);
-
-    const displayLabel = latestOnly
+    const columns   = data.columns && data.columns.length ? data.columns : Object.keys(data.rows[0]);
+    const dispLabel = latestOnly
       ? `최신 ${data.rows.length}개 (word+label 중복 제거)`
       : `최근 ${data.rows.length}개`;
 
-    const theadHtml = columns.map((c) => `<th>${escHtml(c)}</th>`).join("");
+    const theadHtml = columns.map(c => `<th>${escHtml(c)}</th>`).join("");
     const tbodyHtml = data.rows.map((r, idx) =>
-      `<tr class="clickable" data-idx="${idx}">${columns.map((c) => `<td>${escHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
+      `<tr class="clickable" data-idx="${idx}">${columns.map(c => `<td>${escHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
     ).join("");
 
+    const penaltyBody = data.penalty_summary
+      ? `<div class="chart-canvas-wrap"><canvas id="chart-penalty"></canvas></div>`
+      : `<p class="no-data-inline">세부 penalty 데이터가 없습니다.<br/>최신 scorer로 재채점 후 확인하세요.</p>`;
+
+    const featureBody = data.feature_score_summary
+      ? `<div class="chart-canvas-wrap"><canvas id="chart-feature-score"></canvas></div>`
+      : `<p class="no-data-inline">feature score 데이터가 없습니다.</p>`;
+
     wrap.innerHTML = `
-      <div class="meta-box">
+      ${_buildSummaryCards(data.summary_cards)}
+
+      <div class="meta-box" style="margin-top:8px;">
         <strong>table:</strong> ${escHtml(data.table ?? "")}
-        &nbsp;·&nbsp;
-        <strong>전체 rows:</strong> ${data.row_count}
-        &nbsp;·&nbsp;
-        <strong>표시:</strong> ${displayLabel}
+        &nbsp;·&nbsp; <strong>전체 rows:</strong> ${data.row_count}
+        &nbsp;·&nbsp; <strong>표시:</strong> ${dispLabel}
       </div>
-      ${_renderLabelSummary(data.label_summary)}
 
       <div class="chart-grid" style="margin-top:16px;">
         <div class="chart-box">
@@ -521,14 +534,25 @@ async function loadUserResults(latestOnly = true) {
       <div class="chart-grid single">
         <div class="chart-box">
           <div class="chart-title">음소별 라벨 평균 점수</div>
-          <div class="chart-canvas-wrap"><canvas id="chart-phoneme-label"></canvas></div>
+          <div class="chart-canvas-wrap" style="height:300px;"><canvas id="chart-phoneme-label"></canvas></div>
+        </div>
+      </div>
+
+      <div class="chart-grid">
+        <div class="chart-box">
+          <div class="chart-title">라벨별 Penalty 평균</div>
+          ${penaltyBody}
+        </div>
+        <div class="chart-box">
+          <div class="chart-title">라벨별 Feature Score 평균 (sub-score)</div>
+          ${featureBody}
         </div>
       </div>
 
       <div class="chart-grid single">
         <div class="chart-box">
-          <div class="chart-title">라벨별 Feature 비교 (Penalty 프록시 · 값 정규화)</div>
-          <div class="chart-canvas-wrap"><canvas id="chart-label-feature"></canvas></div>
+          <div class="chart-title">라벨별 Base Score vs Final Score</div>
+          <div class="chart-canvas-wrap"><canvas id="chart-base-final"></canvas></div>
         </div>
       </div>
 
@@ -545,7 +569,9 @@ async function loadUserResults(latestOnly = true) {
     _renderLabelScoreChart(data.label_summary);
     _renderScoreDistChart(data.score_by_label);
     _renderPhonemeLabelChart(data.phoneme_label_breakdown);
-    _renderLabelFeatureChart(data.label_feature_summary);
+    if (data.penalty_summary)       _renderPenaltyChart(data.penalty_summary);
+    if (data.feature_score_summary) _renderFeatureScoreChart(data.feature_score_summary);
+    _renderBaseVsFinalChart(data.score_comparison);
 
     const rows = data.rows;
     wrap.querySelectorAll("#user-table tbody tr.clickable").forEach((tr) => {
@@ -558,12 +584,51 @@ async function loadUserResults(latestOnly = true) {
   }
 }
 
+// ── 상단 요약 카드 ─────────────────────────────────────────────────────────────
+function _buildSummaryCards(cards) {
+  if (!cards) return "";
+  const { avg_by_label, ordered_correctly, latest_count } = cards;
+
+  const labelConfigs = [
+    { key: "good",           label: "good 평균" },
+    { key: "korean_like",    label: "korean_like 평균" },
+    { key: "wrong_or_noisy", label: "wrong 평균" },
+  ];
+
+  const scoreCards = labelConfigs.map(({ key, label }) => {
+    const val   = avg_by_label[key];
+    const color = _labelColor(key, "border");
+    return `<div class="stat-card">
+      <div class="stat-label">${label}</div>
+      <div class="user-stat-value" style="color:${color};">${val != null ? val : "—"}</div>
+    </div>`;
+  }).join("");
+
+  const orderBadge = ordered_correctly
+    ? `<span class="pill pill-ok" style="font-size:12px;">good &gt; korean_like &gt; wrong ✓</span>`
+    : `<span class="pill pill-warn" style="font-size:12px;">순서 불일치 ✗</span>`;
+
+  return `
+    <div class="stat-grid user-summary-grid">
+      <div class="stat-card">
+        <div class="stat-label">Latest Rows</div>
+        <div class="stat-value">${latest_count}</div>
+      </div>
+      ${scoreCards}
+      <div class="stat-card ${ordered_correctly ? "ok" : "warn"}">
+        <div class="stat-label">채점 순서 검증</div>
+        <div style="margin-top:10px;">${orderBadge}</div>
+      </div>
+    </div>
+  `;
+}
+
 // ── Chart 1: 라벨별 평균 점수 ─────────────────────────────────────────────────
 function _renderLabelScoreChart(labelSummary) {
   if (!labelSummary || !labelSummary.length) return;
-  const labels = labelSummary.map((s) => s.test_label ?? "NULL");
-  const scores = labelSummary.map((s) => s.avg_score ?? 0);
-  const counts = labelSummary.map((s) => s.count);
+  const labels = labelSummary.map(s => s.test_label ?? "NULL");
+  const scores = labelSummary.map(s => s.avg_score ?? 0);
+  const counts = labelSummary.map(s => s.count);
   _createChart("chart-label-score", {
     type: "bar",
     data: {
@@ -571,8 +636,8 @@ function _renderLabelScoreChart(labelSummary) {
       datasets: [{
         label: "평균 점수",
         data: scores,
-        backgroundColor: labels.map((l) => _labelColor(l, "bg")),
-        borderColor:     labels.map((l) => _labelColor(l, "border")),
+        backgroundColor: labels.map(l => _labelColor(l, "bg")),
+        borderColor:     labels.map(l => _labelColor(l, "border")),
         borderWidth: 2,
       }],
     },
@@ -583,7 +648,7 @@ function _renderLabelScoreChart(labelSummary) {
       scales: { x: { min: 0, max: 100, title: { display: true, text: "점수" } } },
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: (ctx) => ` avg ${ctx.raw} / ${counts[ctx.dataIndex]}건` } },
+        tooltip: { callbacks: { label: ctx => ` avg ${ctx.raw} / ${counts[ctx.dataIndex]}건` } },
       },
     },
   });
@@ -592,13 +657,13 @@ function _renderLabelScoreChart(labelSummary) {
 // ── Chart 2: 음소별 라벨 평균 점수 ───────────────────────────────────────────
 function _renderPhonemeLabelChart(breakdown) {
   if (!breakdown || !breakdown.length) return;
-  const phonemes  = [...new Set(breakdown.map((b) => b.phoneme))].sort();
-  const labelKeys = [...new Set(breakdown.map((b) => b.test_label ?? "NULL"))].sort();
+  const phonemes  = [...new Set(breakdown.map(b => b.phoneme))].sort();
+  const labelKeys = [...new Set(breakdown.map(b => b.test_label ?? "NULL"))].sort();
 
-  const datasets = labelKeys.map((label) => ({
+  const datasets = labelKeys.map(label => ({
     label,
-    data: phonemes.map((p) => {
-      const found = breakdown.find((b) => b.phoneme === p && (b.test_label ?? "NULL") === label);
+    data: phonemes.map(p => {
+      const found = breakdown.find(b => b.phoneme === p && (b.test_label ?? "NULL") === label);
       return found ? found.avg_score : null;
     }),
     backgroundColor: _labelColor(label, "bg"),
@@ -608,7 +673,7 @@ function _renderPhonemeLabelChart(breakdown) {
 
   _createChart("chart-phoneme-label", {
     type: "bar",
-    data: { labels: phonemes.map((p) => `/${p}/`), datasets },
+    data: { labels: phonemes.map(p => `/${p}/`), datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -618,57 +683,7 @@ function _renderPhonemeLabelChart(breakdown) {
   });
 }
 
-// ── Chart 3: 라벨별 Feature 비교 (Radar) ─────────────────────────────────────
-function _renderLabelFeatureChart(featureSummary) {
-  if (!featureSummary || !featureSummary.length) return;
-
-  const AXES = [
-    { key: "avg_mfcc_distance", label: "MFCC Dist" },
-    { key: "avg_zcr_mean",      label: "ZCR" },
-    { key: "avg_rms_mean",      label: "RMS" },
-    { key: "avg_duration_ms",   label: "Duration" },
-  ];
-
-  const rawValues = featureSummary.map((s) => AXES.map((ax) => s[ax.key] ?? 0));
-  const mins = AXES.map((_, i) => Math.min(...rawValues.map((r) => r[i])));
-  const maxs = AXES.map((_, i) => Math.max(...rawValues.map((r) => r[i])));
-  const normalized = rawValues.map((row) =>
-    row.map((v, i) =>
-      maxs[i] > mins[i] ? Math.round(((v - mins[i]) / (maxs[i] - mins[i])) * 100) / 100 : 0.5
-    )
-  );
-
-  const datasets = featureSummary.map((s, idx) => {
-    const label = s.test_label ?? "NULL";
-    return {
-      label,
-      data: normalized[idx],
-      backgroundColor: _labelColor(label, "radar"),
-      borderColor:     _labelColor(label, "border"),
-      borderWidth: 2,
-      pointRadius: 3,
-    };
-  });
-
-  _createChart("chart-label-feature", {
-    type: "radar",
-    data: { labels: AXES.map((ax) => ax.label), datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        r: {
-          min: 0, max: 1,
-          ticks: { display: false },
-          pointLabels: { font: { size: 11 } },
-        },
-      },
-      plugins: { legend: { display: true, position: "top" } },
-    },
-  });
-}
-
-// ── Chart 4: 점수 분포 ────────────────────────────────────────────────────────
+// ── Chart 3: 점수 분포 ────────────────────────────────────────────────────────
 function _renderScoreDistChart(scoreByLabel) {
   if (!scoreByLabel || !Object.keys(scoreByLabel).length) return;
 
@@ -683,10 +698,10 @@ function _renderScoreDistChart(scoreByLabel) {
   ];
 
   const labelKeys = Object.keys(scoreByLabel).sort();
-  const datasets = labelKeys.map((label) => ({
+  const datasets  = labelKeys.map(label => ({
     label,
     data: BUCKETS.map(({ min, max }) =>
-      scoreByLabel[label].filter((s) => s >= min && s < max).length
+      scoreByLabel[label].filter(s => s >= min && s < max).length
     ),
     backgroundColor: _labelColor(label, "bg"),
     borderColor:     _labelColor(label, "border"),
@@ -695,7 +710,7 @@ function _renderScoreDistChart(scoreByLabel) {
 
   _createChart("chart-score-dist", {
     type: "bar",
-    data: { labels: BUCKETS.map((b) => b.label), datasets },
+    data: { labels: BUCKETS.map(b => b.label), datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -705,30 +720,144 @@ function _renderScoreDistChart(scoreByLabel) {
   });
 }
 
-// ── Chart 5: Row 상세 클릭 ────────────────────────────────────────────────────
+// ── Chart 4: 라벨별 Penalty 평균 ─────────────────────────────────────────────
+function _renderPenaltyChart(penaltySummary) {
+  if (!penaltySummary || !penaltySummary.length) return;
+  const activeDefs = _PENALTY_DEFS.filter(def =>
+    penaltySummary.some(s => s[def.key] != null)
+  );
+  if (!activeDefs.length) return;
+
+  const labels   = penaltySummary.map(s => s.test_label ?? "NULL");
+  const datasets = activeDefs.map(def => ({
+    label: def.label,
+    data:  penaltySummary.map(s => s[def.key] ?? null),
+    backgroundColor: def.color + "aa",
+    borderColor: def.color,
+    borderWidth: 1,
+  }));
+
+  _createChart("chart-penalty", {
+    type: "bar",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { y: { beginAtZero: true, title: { display: true, text: "penalty 점수" } } },
+      plugins: { legend: { display: true, position: "top" } },
+    },
+  });
+}
+
+// ── Chart 5: 라벨별 Feature Score 평균 ───────────────────────────────────────
+function _renderFeatureScoreChart(featureScoreSummary) {
+  if (!featureScoreSummary || !featureScoreSummary.length) return;
+  const activeDefs = _FEATURE_SCORE_DEFS.filter(def =>
+    featureScoreSummary.some(s => s[def.key] != null)
+  );
+  if (!activeDefs.length) return;
+
+  const labels   = featureScoreSummary.map(s => s.test_label ?? "NULL");
+  const datasets = activeDefs.map(def => ({
+    label: def.label,
+    data:  featureScoreSummary.map(s => s[def.key] ?? null),
+    backgroundColor: def.color + "aa",
+    borderColor: def.color,
+    borderWidth: 1,
+  }));
+
+  _createChart("chart-feature-score", {
+    type: "bar",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { y: { min: 0, max: 100, title: { display: true, text: "sub-score" } } },
+      plugins: { legend: { display: true, position: "top" } },
+    },
+  });
+}
+
+// ── Chart 6: Base Score vs Final Score ────────────────────────────────────────
+function _renderBaseVsFinalChart(scoreComparison) {
+  if (!scoreComparison || !scoreComparison.length) return;
+  const labels   = scoreComparison.map(s => s.test_label ?? "NULL");
+  const datasets = [];
+
+  if (scoreComparison.some(s => s.avg_base_score != null)) {
+    datasets.push({
+      label: "base_score",
+      data: scoreComparison.map(s => s.avg_base_score ?? null),
+      backgroundColor: "rgba(99,102,241,0.7)",
+      borderColor: "#6366f1",
+      borderWidth: 2,
+    });
+  }
+
+  const hasFinal = scoreComparison.some(s => s.avg_final_score != null);
+  datasets.push({
+    label: hasFinal ? "final_score" : "score",
+    data: scoreComparison.map(s => (hasFinal ? s.avg_final_score : s.avg_score) ?? null),
+    backgroundColor: "rgba(16,185,129,0.7)",
+    borderColor: "#10b981",
+    borderWidth: 2,
+  });
+
+  _createChart("chart-base-final", {
+    type: "bar",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { y: { min: 0, max: 100, title: { display: true, text: "점수" } } },
+      plugins: { legend: { display: true, position: "top" } },
+    },
+  });
+}
+
+// ── Chart 7: Row 상세 클릭 ────────────────────────────────────────────────────
 function _onUserRowClick(tr, row) {
-  document.querySelectorAll("#user-table tbody tr").forEach((r) => r.classList.remove("selected"));
+  document.querySelectorAll("#user-table tbody tr").forEach(r => r.classList.remove("selected"));
   tr.classList.add("selected");
 
-  const panel  = document.getElementById("user-row-detail");
-  const label  = row.test_label ?? "NULL";
-  const score  = row.score ?? "—";
-  const grade  = row.grade ?? "";
-  const color  = _labelColor(label, "border");
+  const panel = document.getElementById("user-row-detail");
+  const label = row.test_label ?? "NULL";
+  const color = _labelColor(label, "border");
+  const score = row.final_score ?? row.score ?? null;
+  const base  = row.base_score ?? null;
 
-  const features = [
-    ["Duration",  row.duration_ms             != null ? `${row.duration_ms} ms`                            : "—"],
-    ["RMS",       row.rms_mean                != null ? Number(row.rms_mean).toFixed(4)                    : "—"],
-    ["ZCR",       row.zcr_mean                != null ? Number(row.zcr_mean).toFixed(4)                    : "—"],
-    ["Spectral",  row.spectral_centroid_mean  != null ? `${Number(row.spectral_centroid_mean).toFixed(0)} Hz` : "—"],
-    ["MFCC Dist", row.mfcc_distance           != null ? Number(row.mfcc_distance).toFixed(3)               : "—"],
+  const featureItems = [
+    { name: "MFCC",     key: "mfcc_score",             type: "score" },
+    { name: "Duration", key: "duration_score",          type: "score" },
+    { name: "RMS",      key: "rms_score",               type: "score" },
+    { name: "ZCR",      key: "zcr_score",               type: "score" },
+    { name: "Spectral", key: "spectral_centroid_score", type: "score" },
+  ].filter(f => row[f.key] != null);
+
+  const penaltyItems = [
+    { name: "quality",       key: "quality_penalty",       type: "penalty" },
+    { name: "pronunciation", key: "pronunciation_penalty", type: "penalty" },
+    { name: "duration pen.", key: "duration_penalty",      type: "penalty" },
+    { name: "volume",        key: "volume_penalty",        type: "penalty" },
+    { name: "noise",         key: "noise_penalty",         type: "penalty" },
+    { name: "total",         key: "total_penalty",         type: "penalty" },
+  ].filter(p => row[p.key] != null);
+
+  const barItems    = [...featureItems, ...penaltyItems];
+  const barHeight   = Math.max(barItems.length * 28 + 40, 80);
+
+  const rawValues = [
+    ["Score",      score != null ? Number(score).toFixed(1) : "—"],
+    ["Base",       base  != null ? Number(base).toFixed(1)  : "—"],
+    ["Total Pen.", row.total_penalty       != null ? Number(row.total_penalty).toFixed(1)       : "—"],
+    ["MFCC Dist",  row.mfcc_distance       != null ? Number(row.mfcc_distance).toFixed(3)       : "—"],
+    ["Duration",   row.duration_ms         != null ? `${row.duration_ms} ms`                    : "—"],
+    ["Dur. Ratio", row.duration_ratio      != null ? Number(row.duration_ratio).toFixed(2)      : "—"],
+    ["RMS",        row.rms_mean            != null ? Number(row.rms_mean).toFixed(4)            : "—"],
+    ["ZCR",        row.zcr_mean            != null ? Number(row.zcr_mean).toFixed(4)            : "—"],
+    ["Spectral",   row.spectral_centroid_mean != null
+      ? `${Number(row.spectral_centroid_mean).toFixed(0)} Hz` : "—"],
   ];
-
-  const featureHtml = features.map(([name, val]) => `
-    <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f0f7ff;">
-      <span style="color:#6b7c8f;font-size:12px;">${name}</span>
-      <span style="font-variant-numeric:tabular-nums;">${val}</span>
-    </div>`).join("");
 
   panel.innerHTML = `
     <div class="user-row-detail-inner">
@@ -736,62 +865,102 @@ function _onUserRowClick(tr, row) {
         <h3>${escHtml(row.word ?? "")} <span>/${escHtml(row.phoneme ?? "")}/</span></h3>
         <div style="position:relative;height:110px;margin:8px 0;">
           <canvas id="chart-row-detail"></canvas>
-          <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);font-size:26px;font-weight:700;color:${color};">${score}</div>
+          <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);
+                      font-size:26px;font-weight:700;color:${color};">
+            ${score != null ? Number(score).toFixed(1) : "—"}
+          </div>
         </div>
-        <div class="grade-badge">${escHtml(grade)}</div>
+        <div class="grade-badge">${escHtml(row.grade ?? "")}</div>
         <div style="font-size:11px;color:#6b7c8f;margin-top:4px;">${escHtml(label)}</div>
+        ${base != null
+          ? `<div style="font-size:12px;color:#6b7c8f;margin-top:4px;">
+               base ${Number(base).toFixed(1)} → final ${score != null ? Number(score).toFixed(1) : "—"}
+             </div>`
+          : ""}
       </div>
+
+      ${barItems.length ? `
+      <div style="flex:2;min-width:240px;">
+        <div class="col-title">Sub Scores &amp; Penalties</div>
+        <div style="height:${barHeight}px;margin-top:8px;">
+          <canvas id="chart-row-bar"></canvas>
+        </div>
+      </div>` : ""}
+
       <div class="detail-info-col">
-        <div class="col-title">Features</div>
-        ${featureHtml}
-        <div class="col-title" style="margin-top:12px;">Feedback</div>
-        <div style="color:#16324f;font-size:13px;margin-top:4px;line-height:1.6;">${escHtml(row.feedback ?? "—")}</div>
+        <div class="col-title">Raw Values</div>
+        ${rawValues.map(([n, v]) => `
+          <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #f0f7ff;">
+            <span style="color:#6b7c8f;font-size:12px;">${n}</span>
+            <span style="font-variant-numeric:tabular-nums;">${v}</span>
+          </div>`).join("")}
+        ${row.feedback ? `
+          <div class="col-title" style="margin-top:10px;">Feedback</div>
+          <div style="color:#16324f;font-size:12px;margin-top:4px;line-height:1.5;">${escHtml(row.feedback)}</div>
+        ` : ""}
       </div>
     </div>
   `;
   panel.style.display = "block";
 
-  const numScore = parseFloat(row.score) || 0;
-  _createChart("chart-row-detail", {
-    type: "doughnut",
-    data: {
-      labels: ["점수", ""],
-      datasets: [{
-        data: [numScore, 100 - numScore],
-        backgroundColor: [color, "#f0f7ff"],
-        borderColor:     [color, "#d8e9f7"],
-        borderWidth: 1,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      cutout: "72%",
-      rotation: -90,
-      circumference: 180,
-      plugins: {
-        legend: { display: false },
-        tooltip: { filter: (item) => item.dataIndex === 0 },
+  if (score != null) {
+    _createChart("chart-row-detail", {
+      type: "doughnut",
+      data: {
+        labels: ["점수", ""],
+        datasets: [{
+          data: [Number(score), 100 - Number(score)],
+          backgroundColor: [color, "#f0f7ff"],
+          borderColor:     [color, "#d8e9f7"],
+          borderWidth: 1,
+        }],
       },
-    },
-  });
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: "72%",
+        rotation: -90,
+        circumference: 180,
+        plugins: {
+          legend: { display: false },
+          tooltip: { filter: item => item.dataIndex === 0 },
+        },
+      },
+    });
+  }
+
+  if (barItems.length) {
+    _createChart("chart-row-bar", {
+      type: "bar",
+      data: {
+        labels: barItems.map(i => i.name),
+        datasets: [{
+          label: "값",
+          data:  barItems.map(i => row[i.key]),
+          backgroundColor: barItems.map(i =>
+            i.type === "score" ? "rgba(59,130,246,0.75)" : "rgba(239,68,68,0.75)"
+          ),
+          borderColor: barItems.map(i => i.type === "score" ? "#3b82f6" : "#ef4444"),
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { x: { min: 0, max: 100 } },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ` ${Number(ctx.raw).toFixed(1)}` } },
+        },
+      },
+    });
+  }
 
   panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 // ── 유틸 ─────────────────────────────────────────────────────────────────────
-
-function _renderLabelSummary(summary) {
-  if (!summary || !summary.length) return "";
-  const cells = summary.map((s) => {
-    const label = s.test_label ?? "NULL";
-    const avg   = s.avg_score != null ? s.avg_score : "—";
-    return `<span class="pill pill-ok" style="margin-right:6px;">
-      <strong>${escHtml(String(label))}</strong>: ${s.count}건 · avg ${avg}
-    </span>`;
-  }).join("");
-  return `<div class="meta-box" style="margin-top:6px;"><strong>라벨별:</strong> ${cells}</div>`;
-}
 
 function escHtml(str) {
   return String(str ?? "")

@@ -402,3 +402,19 @@ body {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── User Results 전용 ───────────────────────────────────── */
+.user-stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  margin-top: 8px;
+}
+
+.no-data-inline {
+  color: #6b7c8f;
+  font-size: 13px;
+  padding: 24px 16px;
+  text-align: center;
+  line-height: 1.8;
+}

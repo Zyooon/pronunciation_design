@@ -26,13 +26,35 @@ COMPARISON_RESULTS_PATH = DATA_DIR / "comparison_results.json"
 ANALYSIS_REPORT_PATH    = DATA_DIR / "comparison_analysis_report.json"
 DB_PATH                 = DATA_DIR / "pronunciation.db"
 
-USER_RECORDINGS_TABLE   = "user_recordings"
-USER_RECORDINGS_COLUMNS = [
-    "id", "created_at", "word", "phoneme", "score", "grade",
-    "feedback", "recording_path", "test_label",
-    "duration_ms", "rms_mean", "zcr_mean", "spectral_centroid_mean", "mfcc_distance",
+USER_RECORDINGS_TABLE = "user_recordings"
+USER_RECORDINGS_LIMIT = 200
+
+# 테이블 표시 컬럼 (존재하는 것만 사용)
+_TABLE_DISPLAY_COLS = [
+    "id", "created_at", "word", "phoneme", "test_label",
+    "score", "base_score", "final_score", "total_penalty", "recording_path",
 ]
-USER_RECORDINGS_LIMIT   = 200
+
+# row 클릭 상세에 포함할 전체 컬럼 (details_json 제외)
+_ALL_ROW_COLS = [
+    "id", "created_at", "word", "phoneme", "test_label",
+    "score", "grade", "feedback", "recording_path",
+    "base_score", "final_score",
+    "mfcc_score", "duration_score", "rms_score", "zcr_score", "spectral_centroid_score",
+    "quality_penalty", "pronunciation_penalty", "total_penalty",
+    "duration_penalty", "volume_penalty", "noise_penalty",
+    "duration_ms", "rms_mean", "zcr_mean", "spectral_centroid_mean", "mfcc_distance",
+    "duration_ratio",
+]
+
+_PENALTY_COLS = [
+    "quality_penalty", "pronunciation_penalty", "total_penalty",
+    "duration_penalty", "volume_penalty", "noise_penalty",
+]
+
+_FEATURE_SCORE_COLS = [
+    "mfcc_score", "duration_score", "rms_score", "zcr_score", "spectral_centroid_score",
+]
 
 app = FastAPI(title="Pronunciation Analysis Viewer", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "static"), name="static")
@@ -161,10 +183,13 @@ def load_user_results_from_db(
         "columns": [],
         "rows": [],
         "label_summary": [],
-        "phoneme_label_summary": [],
         "phoneme_label_breakdown": [],
-        "label_feature_summary": [],
         "score_by_label": {},
+        "summary_cards": None,
+        "penalty_summary": None,
+        "feature_score_summary": None,
+        "score_comparison": [],
+        "available_columns": [],
         "latest_only": latest_only,
         "error": None,
     }
@@ -179,13 +204,17 @@ def load_user_results_from_db(
 
         tables = {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
         if USER_RECORDINGS_TABLE not in tables:
             result["error"] = f"{USER_RECORDINGS_TABLE} 테이블이 없습니다."
             return result
+
+        available_cols: set[str] = {
+            row["name"]
+            for row in conn.execute(f"PRAGMA table_info({USER_RECORDINGS_TABLE})")
+        }
+        result["available_columns"] = sorted(available_cols)
 
         if latest_only:
             _cte = (
@@ -202,14 +231,16 @@ def load_user_results_from_db(
             _cte = ""
             _src = USER_RECORDINGS_TABLE
 
-        col_list = ", ".join(USER_RECORDINGS_COLUMNS)
+        row_cols = [c for c in _ALL_ROW_COLS if c in available_cols]
         rows = [
             dict(row)
             for row in conn.execute(
-                f"{_cte}SELECT {col_list} FROM {_src} ORDER BY id DESC LIMIT ?",
+                f"{_cte}SELECT {', '.join(row_cols)} FROM {_src} ORDER BY id DESC LIMIT ?",
                 (limit,),
             )
         ]
+
+        display_cols = [c for c in _TABLE_DISPLAY_COLS if c in available_cols]
 
         total = conn.execute(
             f"SELECT COUNT(*) FROM {USER_RECORDINGS_TABLE}"
@@ -224,34 +255,12 @@ def load_user_results_from_db(
             )
         ]
 
-        phoneme_label_summary = [
-            dict(row)
-            for row in conn.execute(
-                f"{_cte}SELECT phoneme, COUNT(*) AS count,"
-                f" ROUND(AVG(score), 1) AS avg_score"
-                f" FROM {_src} GROUP BY phoneme ORDER BY phoneme"
-            )
-        ]
-
         phoneme_label_breakdown = [
             dict(row)
             for row in conn.execute(
                 f"{_cte}SELECT phoneme, test_label, COUNT(*) AS count,"
                 f" ROUND(AVG(score), 1) AS avg_score"
                 f" FROM {_src} GROUP BY phoneme, test_label ORDER BY phoneme, test_label"
-            )
-        ]
-
-        label_feature_summary = [
-            dict(row)
-            for row in conn.execute(
-                f"{_cte}SELECT test_label,"
-                f" ROUND(AVG(duration_ms), 1) AS avg_duration_ms,"
-                f" ROUND(AVG(rms_mean), 6) AS avg_rms_mean,"
-                f" ROUND(AVG(zcr_mean), 6) AS avg_zcr_mean,"
-                f" ROUND(AVG(mfcc_distance), 3) AS avg_mfcc_distance"
-                f" FROM {_src} WHERE duration_ms IS NOT NULL"
-                f" GROUP BY test_label ORDER BY test_label"
             )
         ]
 
@@ -262,14 +271,51 @@ def load_user_results_from_db(
             key = srow["test_label"] or "NULL"
             score_by_label.setdefault(key, []).append(float(srow["score"]))
 
-        result["row_count"] = total
-        result["columns"] = USER_RECORDINGS_COLUMNS
-        result["rows"] = rows
-        result["label_summary"] = label_summary
-        result["phoneme_label_summary"] = phoneme_label_summary
-        result["phoneme_label_breakdown"] = phoneme_label_breakdown
-        result["label_feature_summary"] = label_feature_summary
-        result["score_by_label"] = score_by_label
+        avg_by_label = {(s["test_label"] or "NULL"): s["avg_score"] for s in label_summary}
+        good_avg  = avg_by_label.get("good")
+        ko_avg    = avg_by_label.get("korean_like")
+        wrong_avg = avg_by_label.get("wrong_or_noisy")
+        ordered = (
+            good_avg is not None and ko_avg is not None and wrong_avg is not None
+            and good_avg > ko_avg > wrong_avg
+        )
+        summary_cards = {
+            "latest_count": len(rows),
+            "avg_by_label": avg_by_label,
+            "ordered_correctly": ordered,
+        }
+
+        avail_penalty = [c for c in _PENALTY_COLS if c in available_cols]
+        penalty_summary = _query_group_avg(conn, _cte, _src, avail_penalty)
+
+        avail_fscores = [c for c in _FEATURE_SCORE_COLS if c in available_cols]
+        feature_score_summary = _query_group_avg(conn, _cte, _src, avail_fscores)
+
+        score_cmp_parts: list[str] = ["ROUND(AVG(score), 1) AS avg_score"]
+        if "base_score" in available_cols:
+            score_cmp_parts.append("ROUND(AVG(base_score), 1) AS avg_base_score")
+        if "final_score" in available_cols:
+            score_cmp_parts.append("ROUND(AVG(final_score), 1) AS avg_final_score")
+        score_comparison = [
+            dict(row)
+            for row in conn.execute(
+                f"{_cte}SELECT test_label, {', '.join(score_cmp_parts)}"
+                f" FROM {_src} GROUP BY test_label ORDER BY test_label"
+            )
+        ]
+
+        result.update({
+            "row_count": total,
+            "columns": display_cols,
+            "rows": rows,
+            "label_summary": label_summary,
+            "phoneme_label_breakdown": phoneme_label_breakdown,
+            "score_by_label": score_by_label,
+            "summary_cards": summary_cards,
+            "penalty_summary": penalty_summary,
+            "feature_score_summary": feature_score_summary,
+            "score_comparison": score_comparison,
+        })
         return result
 
     except sqlite3.Error as e:
@@ -280,6 +326,34 @@ def load_user_results_from_db(
     finally:
         if conn:
             conn.close()
+
+
+def _query_group_avg(
+    conn: sqlite3.Connection,
+    cte: str,
+    src: str,
+    cols: list[str],
+) -> list[dict[str, Any]] | None:
+    """cols 컬럼 목록에 대해 test_label별 AVG를 집계한다.
+
+    데이터가 없거나 cols가 비어 있으면 None을 반환한다.
+    """
+    if not cols:
+        return None
+    has_data_expr = " OR ".join(f"{c} IS NOT NULL" for c in cols)
+    count = conn.execute(
+        f"{cte}SELECT COUNT(*) FROM {src} WHERE {has_data_expr}"
+    ).fetchone()[0]
+    if count == 0:
+        return None
+    avg_exprs = ", ".join(f"ROUND(AVG({c}), 2) AS avg_{c}" for c in cols)
+    return [
+        dict(row)
+        for row in conn.execute(
+            f"{cte}SELECT test_label, {avg_exprs}"
+            f" FROM {src} GROUP BY test_label ORDER BY test_label"
+        )
+    ]
 
 
 # ── 데이터 빌더 ──────────────────────────────────────────────────────────────
