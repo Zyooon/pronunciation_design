@@ -171,6 +171,14 @@
     <section id="tab-user" class="tab-panel">
       <div class="panel-toolbar">
         <h2 class="panel-title">User Test Results</h2>
+        <div class="filter-row">
+          <label>표시 기준
+            <select id="user-mode-select">
+              <option value="latest" selected>최신 기록만 보기</option>
+              <option value="all">전체 기록 보기</option>
+            </select>
+          </label>
+        </div>
       </div>
       <div id="user-results-wrap">
         <div class="spinner-wrap"><div class="spinner"></div></div>

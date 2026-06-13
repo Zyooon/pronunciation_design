@@ -23,7 +23,10 @@ document.addEventListener("DOMContentLoaded", () => {
   loadWordResults();
   loadOutliers();
   loadErrors();
-  loadUserResults();
+  loadUserResults(true);
+  document.getElementById("user-mode-select").addEventListener("change", (e) => {
+    loadUserResults(e.target.value === "latest");
+  });
 });
 
 // ── API 호출 헬퍼 ─────────────────────────────────────────────────────────────
@@ -408,11 +411,12 @@ function renderErrorTable(rows) {
 }
 
 // ── User Results ──────────────────────────────────────────────────────────────
-async function loadUserResults() {
+async function loadUserResults(latestOnly = true) {
   const wrap = document.getElementById("user-results-wrap");
+  wrap.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
 
   try {
-    const data = await fetchJson("/api/user-results");
+    const data = await fetchJson(`/api/user-results?latest_only=${latestOnly}`);
 
     if (!data.exists) {
       wrap.innerHTML = `
@@ -450,7 +454,12 @@ async function loadUserResults() {
       `<tr>${columns.map((c) => `<td>${escHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
     ).join("");
 
+    const displayLabel = latestOnly
+      ? `최신 ${data.rows.length}개 (word+label 중복 제거)`
+      : `최근 ${data.rows.length}개`;
+
     const labelSummaryHtml = _renderLabelSummary(data.label_summary);
+    const phonemeSummaryHtml = _renderPhonemeLabelSummary(data.phoneme_label_summary);
 
     wrap.innerHTML = `
       <div class="meta-box">
@@ -458,9 +467,10 @@ async function loadUserResults() {
         &nbsp;·&nbsp;
         <strong>전체 rows:</strong> ${data.row_count}
         &nbsp;·&nbsp;
-        <strong>표시:</strong> 최근 ${data.rows.length}개
+        <strong>표시:</strong> ${displayLabel}
       </div>
       ${labelSummaryHtml}
+      ${phonemeSummaryHtml}
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr>${theadHtml}</tr></thead>
@@ -483,7 +493,19 @@ function _renderLabelSummary(summary) {
       <strong>${escHtml(String(label))}</strong>: ${s.count}건 · avg ${avg}
     </span>`;
   }).join("");
-  return `<div class="meta-box" style="margin-top:6px;">${cells}</div>`;
+  return `<div class="meta-box" style="margin-top:6px;"><strong>라벨별:</strong> ${cells}</div>`;
+}
+
+function _renderPhonemeLabelSummary(summary) {
+  if (!summary || !summary.length) return "";
+  const cells = summary.map((s) => {
+    const phoneme = s.phoneme ?? "NULL";
+    const avg     = s.avg_score != null ? s.avg_score : "—";
+    return `<span class="pill pill-ok" style="margin-right:6px;">
+      <strong>/${escHtml(String(phoneme))}/</strong>: ${s.count}건 · avg ${avg}
+    </span>`;
+  }).join("");
+  return `<div class="meta-box" style="margin-top:6px;"><strong>음소별:</strong> ${cells}</div>`;
 }
 
 function escHtml(str) {

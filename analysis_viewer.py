@@ -102,9 +102,9 @@ async def get_errors() -> Response:
 
 
 @app.get("/api/user-results")
-async def get_user_results() -> Response:
+async def get_user_results(latest_only: bool = True) -> Response:
     """user_recordings 테이블의 최근 결과를 JSON으로 반환한다."""
-    payload = load_user_results_from_db(DB_PATH, limit=USER_RECORDINGS_LIMIT)
+    payload = load_user_results_from_db(DB_PATH, limit=USER_RECORDINGS_LIMIT, latest_only=latest_only)
     return _json_response(payload)
 
 
@@ -145,8 +145,13 @@ def load_analysis_report(path: Path) -> dict[str, Any] | None:
 def load_user_results_from_db(
     db_path: Path,
     limit: int = USER_RECORDINGS_LIMIT,
+    latest_only: bool = True,
 ) -> dict[str, Any]:
-    """user_recordings 테이블에서 최근 결과를 조회해 반환한다."""
+    """user_recordings 테이블에서 결과를 조회해 반환한다.
+
+    Args:
+        latest_only: True면 word+test_label 조합당 MAX(id) row만 집계한다.
+    """
     result: dict[str, Any] = {
         "exists": db_path.exists(),
         "path": str(db_path),
@@ -155,6 +160,8 @@ def load_user_results_from_db(
         "columns": [],
         "rows": [],
         "label_summary": [],
+        "phoneme_label_summary": [],
+        "latest_only": latest_only,
         "error": None,
     }
 
@@ -176,14 +183,30 @@ def load_user_results_from_db(
             result["error"] = f"{USER_RECORDINGS_TABLE} 테이블이 없습니다."
             return result
 
+        if latest_only:
+            _cte = (
+                f"WITH latest AS ("
+                f" SELECT * FROM {USER_RECORDINGS_TABLE} u"
+                f" WHERE id = ("
+                f"  SELECT MAX(id) FROM {USER_RECORDINGS_TABLE}"
+                f"  WHERE word = u.word AND test_label = u.test_label"
+                f" )"
+                f") "
+            )
+            _src = "latest"
+        else:
+            _cte = ""
+            _src = USER_RECORDINGS_TABLE
+
         col_list = ", ".join(USER_RECORDINGS_COLUMNS)
         rows = [
             dict(row)
             for row in conn.execute(
-                f"SELECT {col_list} FROM {USER_RECORDINGS_TABLE} ORDER BY id DESC LIMIT ?",
+                f"{_cte}SELECT {col_list} FROM {_src} ORDER BY id DESC LIMIT ?",
                 (limit,),
             )
         ]
+
         total = conn.execute(
             f"SELECT COUNT(*) FROM {USER_RECORDINGS_TABLE}"
         ).fetchone()[0]
@@ -191,10 +214,18 @@ def load_user_results_from_db(
         label_summary = [
             dict(row)
             for row in conn.execute(
-                "SELECT test_label, COUNT(*) AS count, "
-                "ROUND(AVG(score), 1) AS avg_score "
-                f"FROM {USER_RECORDINGS_TABLE} "
-                "GROUP BY test_label ORDER BY test_label"
+                f"{_cte}SELECT test_label, COUNT(*) AS count,"
+                f" ROUND(AVG(score), 1) AS avg_score"
+                f" FROM {_src} GROUP BY test_label ORDER BY test_label"
+            )
+        ]
+
+        phoneme_label_summary = [
+            dict(row)
+            for row in conn.execute(
+                f"{_cte}SELECT phoneme, COUNT(*) AS count,"
+                f" ROUND(AVG(score), 1) AS avg_score"
+                f" FROM {_src} GROUP BY phoneme ORDER BY phoneme"
             )
         ]
 
@@ -202,6 +233,7 @@ def load_user_results_from_db(
         result["columns"] = USER_RECORDINGS_COLUMNS
         result["rows"] = rows
         result["label_summary"] = label_summary
+        result["phoneme_label_summary"] = phoneme_label_summary
         return result
 
     except sqlite3.Error as e:
