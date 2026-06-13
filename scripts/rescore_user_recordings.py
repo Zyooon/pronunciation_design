@@ -7,7 +7,6 @@
 """
 
 import argparse
-import json
 import logging
 import sqlite3
 import sys
@@ -155,6 +154,7 @@ def rescore_row(
         return "skip_error"
 
     final_score = score_result["score"]
+    details = score_result.get("details", {})
     mfcc_distance = compute_mfcc_distance(
         user_mfcc=features.get("mfcc_mean"),
         ref_mfcc=reference.get("mfcc_mean"),
@@ -168,7 +168,7 @@ def rescore_row(
             test_label or "NULL",
             row["score"],
             final_score,
-            score_result["details"].get("quality_penalty", 0.0),
+            details.get("total_penalty", details.get("quality_penalty", 0.0)),
         )
         return "dry_run"
 
@@ -185,6 +185,7 @@ def rescore_row(
         zcr_mean=features.get("zcr_mean"),
         spectral_centroid_mean=features.get("spectral_centroid_mean"),
         mfcc_distance=mfcc_distance,
+        details=details,
     )
     log.info(
         "저장 완료: id=%s word=%-12s label=%-14s old_score=%-5s -> new_score=%.1f",
