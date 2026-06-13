@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import sqlite3
+import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -10,13 +11,15 @@ from typing import Any
 
 import numpy as np
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from pipeline.db import DEFAULT_DB_PATH
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_JSON_OUTPUT_PATH = PROJECT_ROOT / "data" / "onset_analysis_report.json"
 DEFAULT_CSV_OUTPUT_PATH = PROJECT_ROOT / "data" / "onset_analysis_report.csv"
-TARGET_LABELS = ("good", "korean_like")
 ONSET_SCALAR_KEYS = (
     "onset_window_ms",
     "onset_zcr_mean",
@@ -133,7 +136,6 @@ def _query_rows(db_path: Path, latest_only: bool) -> list[dict[str, Any]]:
         WHERE test_label IN ('good', 'korean_like')
         ORDER BY word, phoneme, test_label, id
         """
-        params: tuple[Any, ...] = ()
     else:
         sql = """
         SELECT id, word, phoneme, test_label, score, details_json
@@ -141,12 +143,10 @@ def _query_rows(db_path: Path, latest_only: bool) -> list[dict[str, Any]]:
         WHERE test_label IN ('good', 'korean_like')
         ORDER BY word, phoneme, test_label, id
         """
-        params = ()
 
     with sqlite3.connect(str(db_path)) as conn:
         conn.row_factory = sqlite3.Row
-        rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
-    return rows
+        return [dict(row) for row in conn.execute(sql).fetchall()]
 
 
 def _has_onset_details(details: dict[str, Any]) -> bool:
