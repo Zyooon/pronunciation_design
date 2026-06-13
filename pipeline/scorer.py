@@ -26,10 +26,10 @@ _KO_RELATIVE_PENALTY_STRONG = 48.0
 _KO_RELATIVE_PENALTY_MULTIPLIER = 0.8
 _KO_RELATIVE_PENALTY_MAX = 15.0
 
-_LIQUID_ALT_SCORE_START = 50.0
-_LIQUID_ALT_SCORE_STRONG = 44.0
-_LIQUID_ALT_PENALTY_MULTIPLIER = 0.45
-_LIQUID_ALT_PENALTY_MAX = 8.0
+_LIQUID_ALT_SCORE_START = 55.0
+_LIQUID_ALT_SCORE_STRONG = 48.0
+_LIQUID_ALT_PENALTY_MULTIPLIER = 0.7
+_LIQUID_ALT_PENALTY_MAX = 12.0
 
 _QUALITY_GATE_FEEDBACK = "녹음 품질이 낮아 발음 점수를 신뢰하기 어렵습니다. 다시 녹음해주세요."
 _WORD_MISMATCH_FEEDBACK = "녹음된 단어가 목표 단어와 달라 발음 점수를 신뢰하기 어렵습니다. 목표 단어를 다시 녹음해주세요."
@@ -129,7 +129,7 @@ def compute_liquid_alt_metrics(
         (_LIQUID_ALT_SCORE_START - alt_relative_score) * _LIQUID_ALT_PENALTY_MULTIPLIER,
     )
     if alt_relative_score < _LIQUID_ALT_SCORE_STRONG:
-        liquid_alt_penalty += 2.0
+        liquid_alt_penalty += 3.0
     liquid_alt_penalty = float(np.clip(liquid_alt_penalty, 0.0, _LIQUID_ALT_PENALTY_MAX))
 
     return {
