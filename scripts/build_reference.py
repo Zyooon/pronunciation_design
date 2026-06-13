@@ -22,10 +22,7 @@ DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "data" / "reference_vectors.json"
 
 SUPPORTED_AUDIO_EXTENSIONS = [".wav", ".mp3", ".m4a"]
 
-
-# MVP에서 우선 구현할 4개 음소입니다.
-# 나중에 확장하고 싶으면 CLI에서 --include-all 옵션을 사용하면 됩니다.
-MVP_PHONEMES = {"θ", "i", "iː", "æ", "ə"}
+MVP_PHONEMES = {"θ", "i", "iː", "æ", "ə", "f", "v", "r", "l", "oʊ"}
 
 
 VOWEL_PHONEMES = {"i", "iː", "æ", "ə", "oʊ"}

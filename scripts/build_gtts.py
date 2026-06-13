@@ -54,7 +54,7 @@ def main() -> None:
             time.sleep(DELAY)
 
         # Korean
-        ko_path = KO_DIR / f"{en_word}_ko.mp3"
+        ko_path = KO_DIR / f"{en_word}.mp3"
         ko_status = generate(ko_word, "ko", None, ko_path)
         label = "SKIP (already exists)" if ko_status == "SKIP" else ko_status
         print(f"[KO] {ko_path.name} → {label}")

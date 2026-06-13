@@ -1,6 +1,5 @@
 import json
 import logging
-import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, UploadFile
@@ -10,6 +9,8 @@ from webapp.services.pronunciation_facade import analyze_audio, load_word_list
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
+
+_RECORD_SAVE_DIR = Path("data/reference_ko/record")
 
 
 @router.get("/words")
@@ -40,11 +41,10 @@ async def analyze_pronunciation(
         return _error_response(400, "음성 파일이 비어 있습니다.")
 
     suffix = _safe_suffix(audio_file.filename)
-    tmp_path: Path | None = None
+    save_path = _save_record_audio(audio_bytes, word, suffix)
 
     try:
-        tmp_path = _save_temp_audio(audio_bytes, suffix)
-        result = analyze_audio(word=word, phoneme=phoneme, audio_path=tmp_path)
+        result = analyze_audio(word=word, phoneme=phoneme, audio_path=save_path)
         body = json.dumps(result.to_dict(), ensure_ascii=False)
         return Response(content=body, media_type="application/json; charset=utf-8")
 
@@ -70,18 +70,16 @@ async def analyze_pronunciation(
             500,
             "분석 중 예상치 못한 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
         )
-    finally:
-        if tmp_path and tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
 
 
 # ── 헬퍼 ────────────────────────────────────────────────────────────────────
 
-def _save_temp_audio(data: bytes, suffix: str) -> Path:
-    """오디오 bytes를 임시 파일로 저장하고 경로를 반환한다."""
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(data)
-        return Path(tmp.name)
+def _save_record_audio(data: bytes, word: str, suffix: str) -> Path:
+    """오디오 bytes를 data/reference_ko/record/{word}{suffix}로 저장하고 경로를 반환한다."""
+    _RECORD_SAVE_DIR.mkdir(parents=True, exist_ok=True)
+    save_path = _RECORD_SAVE_DIR / f"{word}{suffix}"
+    save_path.write_bytes(data)
+    return save_path
 
 
 def _safe_suffix(filename: str | None) -> str:

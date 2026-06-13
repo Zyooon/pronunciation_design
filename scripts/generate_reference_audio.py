@@ -1,5 +1,5 @@
 """
-words.txt를 읽어 ElevenLabs(영어 4개 목소리) 오디오 파일을 생성합니다.
+words.txt를 읽어 ElevenLabs 오디오 파일을 생성합니다.
 인터넷 연결 및 .env의 ELEVENLABS_API_KEY 필요.
 
 폴더 구조:

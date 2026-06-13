@@ -1,0 +1,337 @@
+/* ── 리셋 & 기본 ──────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  background: #f4f9ff;
+  color: #16324f;
+  min-height: 100vh;
+}
+
+/* ── 헤더 ─────────────────────────────────────────────── */
+.page-header {
+  background: linear-gradient(135deg, #1677c7 0%, #38a7ff 100%);
+  color: #fff;
+  padding: 28px 32px 20px;
+}
+
+.header-inner { max-width: 1440px; margin: 0 auto; }
+
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  margin-bottom: 6px;
+}
+
+.page-header h1 {
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.header-desc { opacity: 0.85; font-size: 13px; margin-bottom: 16px; }
+
+.file-status-row {
+  max-width: 1440px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.file-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: default;
+}
+
+.file-badge.ok      { background: rgba(16, 185, 129, 0.25); color: #fff; border: 1px solid rgba(255,255,255,0.35); }
+.file-badge.missing { background: rgba(239, 68, 68, 0.25);  color: #fff; border: 1px solid rgba(255,255,255,0.35); cursor: help; }
+
+/* ── 탭 네비게이션 ────────────────────────────────────── */
+.tab-nav {
+  background: #fff;
+  border-bottom: 2px solid #d8e9f7;
+  display: flex;
+  gap: 0;
+  padding: 0 32px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(22, 119, 199, 0.07);
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  padding: 14px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7c8f;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.tab-btn:hover  { color: #1677c7; }
+.tab-btn.active { color: #1677c7; border-bottom-color: #38a7ff; font-weight: 700; }
+
+/* ── 탭 패널 ──────────────────────────────────────────── */
+.tab-content { max-width: 1440px; margin: 0 auto; padding: 28px 32px; }
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ── Overview 카드 ───────────────────────────────────── */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: #fff;
+  border: 1px solid #d8e9f7;
+  border-radius: 12px;
+  padding: 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 1px 4px rgba(22, 119, 199, 0.06);
+}
+
+.stat-card .stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7c8f;
+}
+
+.stat-card .stat-value {
+  font-size: 32px;
+  font-weight: 700;
+  color: #1677c7;
+  line-height: 1;
+}
+
+.stat-card.warn .stat-value { color: #f59e0b; }
+.stat-card.err  .stat-value { color: #ef4444; }
+.stat-card.ok   .stat-value { color: #10b981; }
+
+.meta-box {
+  background: #fff;
+  border: 1px solid #d8e9f7;
+  border-radius: 10px;
+  padding: 16px 20px;
+  font-size: 12px;
+  color: #6b7c8f;
+  line-height: 1.8;
+}
+
+.meta-box strong { color: #16324f; }
+
+/* ── 패널 공통 ───────────────────────────────────────── */
+.panel-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.panel-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #16324f;
+}
+
+.panel-hint { font-size: 12px; color: #6b7c8f; }
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-left: auto;
+  font-size: 13px;
+}
+
+.filter-row label { display: flex; align-items: center; gap: 6px; color: #6b7c8f; }
+
+.filter-row select,
+.search-input {
+  border: 1px solid #d8e9f7;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 13px;
+  color: #16324f;
+  background: #fff;
+  outline: none;
+}
+
+.filter-row select:focus,
+.search-input:focus { border-color: #38a7ff; }
+
+.section-divider { height: 1px; background: #d8e9f7; margin: 32px 0; }
+
+/* ── 테이블 ──────────────────────────────────────────── */
+.table-wrap {
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid #d8e9f7;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(22, 119, 199, 0.06);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table thead th {
+  background: #f0f7ff;
+  color: #6b7c8f;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 11px 12px;
+  text-align: left;
+  border-bottom: 1px solid #d8e9f7;
+  white-space: nowrap;
+}
+
+.data-table tbody tr { border-bottom: 1px solid #f0f7ff; transition: background 0.1s; }
+.data-table tbody tr:last-child { border-bottom: none; }
+.data-table tbody tr:hover { background: #f4f9ff; }
+.data-table tbody tr.clickable { cursor: pointer; }
+.data-table tbody tr.selected { background: #e6f2ff; }
+
+.data-table td {
+  padding: 9px 12px;
+  color: #16324f;
+  white-space: nowrap;
+}
+
+.data-table td.phoneme-cell {
+  font-family: monospace;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1677c7;
+}
+
+.data-table td.warn-cell { color: #f59e0b; font-weight: 600; }
+.data-table td.num-cell  { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 비율 컬러링 */
+.ratio-high { color: #ef4444; font-weight: 600; }
+.ratio-low  { color: #10b981; font-weight: 600; }
+
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pill-ok      { background: #d1fae5; color: #065f46; }
+.pill-warn    { background: #fef3c7; color: #92400e; }
+.pill-err     { background: #fee2e2; color: #991b1b; }
+.pill-muted   { background: #f0f7ff; color: #6b7c8f; }
+.pill-missing { background: #f0f7ff; color: #94a3b8; }
+
+/* ── 상세 패널 ───────────────────────────────────────── */
+.detail-panel {
+  background: #fff;
+  border: 1px solid #d8e9f7;
+  border-radius: 10px;
+  padding: 20px 24px;
+  margin-top: 16px;
+  font-size: 13px;
+  line-height: 1.8;
+  box-shadow: 0 2px 8px rgba(22, 119, 199, 0.08);
+}
+
+.detail-panel h3 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1677c7;
+  margin-bottom: 12px;
+}
+
+.detail-row { display: flex; gap: 32px; flex-wrap: wrap; }
+
+.detail-col { min-width: 200px; }
+
+.detail-col .col-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7c8f;
+  margin-bottom: 6px;
+}
+
+.detail-metric-block { margin-bottom: 14px; }
+.detail-metric-block .metric-name { font-weight: 700; color: #16324f; margin-bottom: 4px; }
+.detail-metric-block .metric-sub  { color: #6b7c8f; padding-left: 12px; }
+
+.word-chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.word-chip {
+  background: #e6f2ff;
+  color: #1677c7;
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ── 빈 상태 ──────────────────────────────────────────── */
+.no-data-msg {
+  background: #fff;
+  border: 1px dashed #d8e9f7;
+  border-radius: 10px;
+  padding: 32px;
+  text-align: center;
+  color: #6b7c8f;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.no-data-msg code {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  background: #f4f9ff;
+  border: 1px solid #d8e9f7;
+  border-radius: 6px;
+  padding: 8px 14px;
+  color: #1677c7;
+  font-family: monospace;
+  text-align: left;
+  white-space: pre;
+}
+
+/* ── 스피너 ──────────────────────────────────────────── */
+.spinner-wrap { display: flex; justify-content: center; padding: 48px; }
+
+.spinner {
+  width: 36px; height: 36px;
+  border: 3px solid #d8e9f7;
+  border-top-color: #38a7ff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
