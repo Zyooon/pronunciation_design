@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,9 +26,11 @@ class AudioFeaturesSnapshot:
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORDS_PATH = PROJECT_ROOT / "data" / "words.txt"
+KO_REFERENCE_PATH = PROJECT_ROOT / "data" / "ko_reference_vectors.json"
 
 # reference_vectors.json은 크기가 크므로 프로세스 당 한 번만 로드한다.
 _reference_cache: dict | None = None
+_ko_reference_cache: dict | None = None
 
 
 def load_word_list() -> list[WordDto]:
@@ -86,6 +89,7 @@ def analyze_audio_with_features(
         ValueError: 오디오가 비어 있을 때
     """
     reference_vectors = _get_reference_vectors()
+    ko_reference_vectors = _get_ko_reference_vectors()
 
     if phoneme not in reference_vectors:
         raise KeyError(
@@ -94,12 +98,14 @@ def analyze_audio_with_features(
         )
 
     reference = reference_vectors[phoneme]
+    ko_reference = ko_reference_vectors.get(phoneme)
     waveform, sr = load_trimmed_audio(audio_path)
     features = extract_features(waveform, sr)
     score_result = score_pronunciation(
         user_features=features,
         reference=reference,
         phoneme=phoneme,
+        ko_reference=ko_reference,
     )
 
     mfcc_distance = _compute_mfcc_distance(
@@ -139,3 +145,15 @@ def _get_reference_vectors() -> dict:
     if _reference_cache is None:
         _reference_cache = load_reference_vectors()
     return _reference_cache
+
+
+def _get_ko_reference_vectors() -> dict:
+    """ko_reference_vectors.json을 캐시해서 반환한다. 없으면 기존 scorer만 사용한다."""
+    global _ko_reference_cache
+    if _ko_reference_cache is None:
+        if not KO_REFERENCE_PATH.exists():
+            _ko_reference_cache = {}
+        else:
+            with KO_REFERENCE_PATH.open("r", encoding="utf-8") as f:
+                _ko_reference_cache = json.load(f)
+    return _ko_reference_cache
