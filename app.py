@@ -18,10 +18,21 @@ from pipeline.reference import (
     load_reference_vectors,
 )
 from pipeline.scorer import score_pronunciation
+from pipeline.word_targets import attach_word_target_features, load_word_targets, should_extract_onset
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 RESULTS_PATH = PROJECT_ROOT / "data" / "results.csv"
+ONSET_DETAIL_KEYS = (
+    "target_id",
+    "target_position",
+    "target_phoneme",
+    "onset_window_ms",
+    "onset_mfcc_mean",
+    "onset_zcr_mean",
+    "onset_rms_mean",
+    "onset_spectral_centroid_mean",
+)
 
 
 CUSTOM_CSS = """
@@ -93,8 +104,6 @@ _ISSUE_LABELS = {
 }
 
 
-# ── CSV helpers ───────────────────────────────────────────────────────────────
-
 def ensure_results_csv() -> None:
     RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     if RESULTS_PATH.exists():
@@ -131,6 +140,14 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _attach_analysis_details(result: dict[str, Any], features: dict[str, Any]) -> None:
+    details = dict(result.get("details") or {})
+    for key in ONSET_DETAIL_KEYS:
+        if key in features:
+            details[key] = features[key]
+    result["details"] = details
 
 
 def save_result(
@@ -180,25 +197,22 @@ def save_result(
     )
 
 
-# ── App data init ─────────────────────────────────────────────────────────────
-
-def _init() -> tuple[dict, list, dict, list, str | None]:
+def _init() -> tuple[dict, list, dict, list, dict, str | None]:
     try:
         reference_vectors = load_reference_vectors()
         target_words = get_available_targets()
         target_index = build_target_index(target_words)
         gradio_choices = get_gradio_choices(target_words)
+        word_targets = load_word_targets()
         if not gradio_choices:
             raise ValueError("사용 가능한 단어가 없습니다.")
-        return reference_vectors, target_words, target_index, gradio_choices, None
+        return reference_vectors, target_words, target_index, gradio_choices, word_targets, None
     except Exception as exc:
-        return {}, [], {}, [], f"{type(exc).__name__}: {exc}"
+        return {}, [], {}, [], {}, f"{type(exc).__name__}: {exc}"
 
 
-REFERENCE_VECTORS, TARGET_WORDS, TARGET_INDEX, GRADIO_CHOICES, STARTUP_ERROR = _init()
+REFERENCE_VECTORS, TARGET_WORDS, TARGET_INDEX, GRADIO_CHOICES, WORD_TARGETS, STARTUP_ERROR = _init()
 
-
-# ── Render helpers ───────────────────────────────────────────────────────────
 
 def render_welcome_preview(target_id: str | None) -> str:
     if not target_id or target_id not in TARGET_INDEX:
@@ -322,8 +336,6 @@ def render_result_content(target: Any, result: dict[str, Any]) -> str:
     """
 
 
-# ── Event handlers ───────────────────────────────────────────────────────────
-
 def on_target_change(target_id: str) -> str:
     return render_welcome_preview(target_id)
 
@@ -364,7 +376,9 @@ def analyze_pronunciation(target_id: str, audio_file: str | None) -> Generator:
             reference_vectors=REFERENCE_VECTORS,
         )
         waveform, sample_rate = load_trimmed_audio(audio_file)
-        features = extract_features(waveform, sample_rate)
+        include_onset = should_extract_onset(target.word, target.phoneme, WORD_TARGETS)
+        features = extract_features(waveform, sample_rate, include_onset=include_onset)
+        attach_word_target_features(features, target.word, target.phoneme, WORD_TARGETS)
         quality_result = evaluate_recording_quality(
             features=features,
             reference=reference,
@@ -377,6 +391,7 @@ def analyze_pronunciation(target_id: str, audio_file: str | None) -> Generator:
             phoneme=target.phoneme,
             recording_quality_result=quality_result,
         )
+        _attach_analysis_details(result, features)
         save_result(
             target_word=target.word,
             korean_pronunciation=target.korean_pronunciation,
@@ -402,8 +417,6 @@ def try_again(target_id: str) -> tuple:
 def change_word() -> tuple:
     return gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), None
 
-
-# ── UI ───────────────────────────────────────────────────────────────────────
 
 def build_app() -> gr.Blocks:
     theme = gr.themes.Soft(primary_hue="blue", secondary_hue="indigo", neutral_hue="slate")
