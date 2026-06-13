@@ -7,10 +7,18 @@ from typing import Any, Generator
 import gradio as gr
 
 from pipeline.audio import load_trimmed_audio
+from pipeline.compare import (
+    list_recording_choices,
+    render_onset_analysis_html,
+    render_reference_comparison_html,
+    render_saved_recording_analysis,
+)
 from pipeline.db import save_user_recording_result
 from pipeline.features import extract_features
 from pipeline.quality import evaluate_recording_quality
 from pipeline.reference import (
+    ReferenceVector,
+    TargetWord,
     build_target_index,
     get_available_targets,
     get_gradio_choices,
@@ -23,7 +31,12 @@ from pipeline.word_targets import attach_word_target_features, load_word_targets
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 RESULTS_PATH = PROJECT_ROOT / "data" / "results.csv"
-ONSET_DETAIL_KEYS = (
+ANALYSIS_DETAIL_KEYS = (
+    "duration_ms",
+    "zcr_mean",
+    "rms_mean",
+    "spectral_centroid_mean",
+    "mfcc_mean",
     "target_id",
     "target_position",
     "target_phoneme",
@@ -43,6 +56,7 @@ body, .gradio-container {
 }
 footer { display: none !important; }
 .app-shell { max-width: 430px !important; margin: 0 auto !important; padding: 18px 0 70px !important; }
+.analysis-shell { max-width: 720px !important; margin: 0 auto !important; padding: 18px 0 70px !important; }
 .screen-card { background: #ffffff; border-radius: 24px; box-shadow: 0 4px 28px rgba(30,64,175,.10); overflow: hidden; margin: 0 12px; }
 .hero { background: linear-gradient(135deg, #3b82f6, #6366f1); padding: 34px 24px 28px; text-align: center; color: #fff; }
 .hero-title { font-size: 28px; font-weight: 800; letter-spacing: -.02em; }
@@ -53,7 +67,7 @@ footer { display: none !important; }
 .target-phoneme { display: inline-block; margin-top: 6px; background: #dbeafe; color: #1d4ed8; border-radius: 999px; padding: 4px 12px; font-weight: 700; }
 .target-hint { margin-top: 10px; color: #64748b; font-size: 13px; }
 button { border-radius: 14px !important; }
-#btn-start, #btn-analyze, #btn-change-word { background: #3b82f6 !important; color: #fff !important; border: 0 !important; height: 50px !important; font-weight: 700 !important; }
+#btn-start, #btn-analyze, #btn-change-word, #btn-refresh-analysis { background: #3b82f6 !important; color: #fff !important; border: 0 !important; height: 50px !important; font-weight: 700 !important; }
 #btn-back, #btn-try-again { background: #fff !important; color: #2563eb !important; border: 1px solid #bfdbfe !important; height: 46px !important; font-weight: 700 !important; }
 .recording-zone { background: linear-gradient(160deg, #1e3058, #18264a); padding: 20px 16px; }
 .recording-title { color: #dbeafe; text-align: center; font-weight: 700; margin-bottom: 12px; }
@@ -83,13 +97,20 @@ button { border-radius: 14px !important; }
 .metric-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #6366f1); border-radius: 999px; }
 .metric-val { width: 38px; text-align: right; font-size: 13px; font-weight: 800; color: #1e40af; }
 .actions { padding: 14px 16px 24px; gap: 10px; }
-@media (max-width: 480px) { .app-shell { padding: 0 0 60px !important; } .screen-card { margin: 0; border-radius: 0 0 20px 20px; } }
+@media (max-width: 480px) { .app-shell, .analysis-shell { padding: 0 0 60px !important; } .screen-card { margin: 0; border-radius: 0 0 20px 20px; } }
 """
 
 _LOADING_HTML = """
 <div class="loading-wrap">
   <div class="spinner-ring"></div>
   <div class="loading-text">발음을 분석하고 있습니다...</div>
+</div>
+"""
+
+_EMPTY_ANALYSIS_HTML = """
+<div class="metrics-card">
+  <div class="card-lbl">Analysis</div>
+  <div class="card-body">저장된 녹음을 선택하면 내 음성과 영어 reference의 수치 비교가 표시됩니다.</div>
 </div>
 """
 
@@ -144,7 +165,7 @@ def _float_or_none(value: Any) -> float | None:
 
 def _attach_analysis_details(result: dict[str, Any], features: dict[str, Any]) -> None:
     details = dict(result.get("details") or {})
-    for key in ONSET_DETAIL_KEYS:
+    for key in ANALYSIS_DETAIL_KEYS:
         if key in features:
             details[key] = features[key]
     result["details"] = details
@@ -197,7 +218,7 @@ def save_result(
     )
 
 
-def _init() -> tuple[dict, list, dict, list, dict, str | None]:
+def _init() -> tuple[dict[str, ReferenceVector], list[TargetWord], dict[str, TargetWord], list, dict, str | None]:
     try:
         reference_vectors = load_reference_vectors()
         target_words = get_available_targets()
@@ -294,7 +315,7 @@ def _render_metric_rows(details: dict[str, Any]) -> str:
     return f'<div class="metrics-card"><div class="card-lbl">Detailed Metrics</div>{"".join(rows)}</div>'
 
 
-def render_result_content(target: Any, result: dict[str, Any]) -> str:
+def render_result_content(target: TargetWord, result: dict[str, Any], reference: ReferenceVector) -> str:
     score = result.get("score")
     feedback = result.get("feedback", "")
     details = result.get("details", {})
@@ -321,6 +342,9 @@ def render_result_content(target: Any, result: dict[str, Any]) -> str:
         </div>
         """
 
+    comparison_html = render_reference_comparison_html(details, reference)
+    onset_html = render_onset_analysis_html(details)
+
     return f"""
     <div class="result-target">
       <div class="result-word">{target.word}</div>
@@ -333,6 +357,8 @@ def render_result_content(target: Any, result: dict[str, Any]) -> str:
       <div class="card-body">{feedback}</div>
     </div>
     {_render_metric_rows(details)}
+    {comparison_html}
+    {onset_html}
     """
 
 
@@ -360,6 +386,17 @@ def start_practice(target_id: str) -> tuple:
 
 def go_to_welcome() -> tuple:
     return gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
+
+
+def render_analysis_for_recording(recording_id: int | None) -> str:
+    return render_saved_recording_analysis(recording_id, REFERENCE_VECTORS)
+
+
+def refresh_analysis_options() -> tuple:
+    choices = list_recording_choices()
+    selected = choices[0][1] if choices else None
+    html = render_analysis_for_recording(selected) if selected else _EMPTY_ANALYSIS_HTML
+    return gr.update(choices=choices, value=selected), html
 
 
 def analyze_pronunciation(target_id: str, audio_file: str | None) -> Generator:
@@ -400,7 +437,7 @@ def analyze_pronunciation(target_id: str, audio_file: str | None) -> Generator:
             features=features,
             recording_path=audio_file,
         )
-        yield gr.update(visible=False), gr.update(visible=True), render_result_content(target, result), ""
+        yield gr.update(visible=False), gr.update(visible=True), render_result_content(target, result, reference), ""
     except Exception as exc:
         yield (
             gr.update(visible=False),
@@ -418,79 +455,117 @@ def change_word() -> tuple:
     return gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), None
 
 
+def build_practice_tab() -> None:
+    default_id = GRADIO_CHOICES[0][1] if GRADIO_CHOICES else None
+    with gr.Column(elem_classes=["app-shell"]):
+        with gr.Column(visible=True, elem_id="screen_welcome", elem_classes=["screen-card"]) as screen_welcome:
+            gr.HTML("""
+            <div class="hero">
+              <div class="hero-title">PronounceAI</div>
+              <div class="hero-sub">한국인 학습자를 위한 AI 영어 발음 코치</div>
+            </div>
+            """)
+            with gr.Column(elem_classes=["body-pad"]):
+                target_dropdown = gr.Dropdown(
+                    choices=GRADIO_CHOICES,
+                    value=default_id,
+                    label="연습할 단어 선택",
+                    interactive=not bool(STARTUP_ERROR),
+                )
+                welcome_word_preview = gr.HTML(value=render_welcome_preview(default_id))
+                welcome_error = gr.HTML(STARTUP_ERROR or "")
+                start_btn = gr.Button("Start Practice →", elem_id="btn-start", variant="primary")
+
+        with gr.Column(visible=False, elem_id="screen_practice", elem_classes=["screen-card"]) as screen_practice:
+            with gr.Column(elem_classes=["body-pad"]):
+                back_btn = gr.Button("← Back", elem_id="btn-back")
+                practice_header = gr.HTML("")
+            with gr.Column(elem_classes=["recording-zone"]):
+                gr.HTML('<div class="recording-title">단어를 발음하고 녹음해주세요</div>')
+                audio_input = gr.Audio(
+                    sources=["microphone", "upload"],
+                    type="filepath",
+                    label="녹음 또는 파일 업로드",
+                    interactive=not bool(STARTUP_ERROR),
+                )
+            with gr.Column(elem_classes=["body-pad"]):
+                practice_status = gr.Markdown(value="", elem_classes=["status-text"])
+                analyze_btn = gr.Button(
+                    "Analyze Pronunciation",
+                    elem_id="btn-analyze",
+                    variant="primary",
+                    interactive=not bool(STARTUP_ERROR),
+                )
+
+        with gr.Column(visible=False, elem_id="screen_result", elem_classes=["screen-card"]) as screen_result:
+            result_content = gr.HTML("")
+            with gr.Row(elem_classes=["actions"]):
+                try_again_btn = gr.Button("Try Again", elem_id="btn-try-again", variant="secondary")
+                change_word_btn = gr.Button("Change Word", elem_id="btn-change-word", variant="primary")
+
+        target_dropdown.change(fn=on_target_change, inputs=[target_dropdown], outputs=[welcome_word_preview])
+        start_btn.click(
+            fn=start_practice,
+            inputs=[target_dropdown],
+            outputs=[screen_welcome, screen_practice, screen_result, practice_header, welcome_error],
+        )
+        back_btn.click(fn=go_to_welcome, outputs=[screen_welcome, screen_practice, screen_result])
+        analyze_btn.click(
+            fn=analyze_pronunciation,
+            inputs=[target_dropdown, audio_input],
+            outputs=[screen_practice, screen_result, result_content, practice_status],
+        )
+        try_again_btn.click(
+            fn=try_again,
+            inputs=[target_dropdown],
+            outputs=[screen_practice, screen_result, practice_header, audio_input, practice_status],
+        )
+        change_word_btn.click(
+            fn=change_word,
+            outputs=[screen_welcome, screen_practice, screen_result, audio_input],
+        )
+
+
+def build_analysis_tab() -> None:
+    choices = list_recording_choices()
+    selected = choices[0][1] if choices else None
+    with gr.Column(elem_classes=["analysis-shell"]):
+        with gr.Column(elem_classes=["screen-card"]):
+            gr.HTML("""
+            <div class="hero">
+              <div class="hero-title">Analysis</div>
+              <div class="hero-sub">저장된 녹음을 선택해 영어 reference와 수치 비교합니다</div>
+            </div>
+            """)
+            with gr.Column(elem_classes=["body-pad"]):
+                recording_dropdown = gr.Dropdown(
+                    choices=choices,
+                    value=selected,
+                    label="분석할 저장 녹음 선택",
+                    interactive=True,
+                )
+                refresh_btn = gr.Button("Refresh recordings", elem_id="btn-refresh-analysis", variant="primary")
+                analysis_html = gr.HTML(value=render_analysis_for_recording(selected) if selected else _EMPTY_ANALYSIS_HTML)
+
+        recording_dropdown.change(
+            fn=render_analysis_for_recording,
+            inputs=[recording_dropdown],
+            outputs=[analysis_html],
+        )
+        refresh_btn.click(
+            fn=refresh_analysis_options,
+            outputs=[recording_dropdown, analysis_html],
+        )
+
+
 def build_app() -> gr.Blocks:
     theme = gr.themes.Soft(primary_hue="blue", secondary_hue="indigo", neutral_hue="slate")
-    default_id = GRADIO_CHOICES[0][1] if GRADIO_CHOICES else None
-
     with gr.Blocks(title="PronounceAI", theme=theme, css=CUSTOM_CSS) as demo:
-        with gr.Column(elem_classes=["app-shell"]):
-            with gr.Column(visible=True, elem_id="screen_welcome", elem_classes=["screen-card"]) as screen_welcome:
-                gr.HTML("""
-                <div class="hero">
-                  <div class="hero-title">PronounceAI</div>
-                  <div class="hero-sub">한국인 학습자를 위한 AI 영어 발음 코치</div>
-                </div>
-                """)
-                with gr.Column(elem_classes=["body-pad"]):
-                    target_dropdown = gr.Dropdown(
-                        choices=GRADIO_CHOICES,
-                        value=default_id,
-                        label="연습할 단어 선택",
-                        interactive=not bool(STARTUP_ERROR),
-                    )
-                    welcome_word_preview = gr.HTML(value=render_welcome_preview(default_id))
-                    welcome_error = gr.HTML(STARTUP_ERROR or "")
-                    start_btn = gr.Button("Start Practice →", elem_id="btn-start", variant="primary")
-
-            with gr.Column(visible=False, elem_id="screen_practice", elem_classes=["screen-card"]) as screen_practice:
-                with gr.Column(elem_classes=["body-pad"]):
-                    back_btn = gr.Button("← Back", elem_id="btn-back")
-                    practice_header = gr.HTML("")
-                with gr.Column(elem_classes=["recording-zone"]):
-                    gr.HTML('<div class="recording-title">단어를 발음하고 녹음해주세요</div>')
-                    audio_input = gr.Audio(
-                        sources=["microphone", "upload"],
-                        type="filepath",
-                        label="녹음 또는 파일 업로드",
-                        interactive=not bool(STARTUP_ERROR),
-                    )
-                with gr.Column(elem_classes=["body-pad"]):
-                    practice_status = gr.Markdown(value="", elem_classes=["status-text"])
-                    analyze_btn = gr.Button(
-                        "Analyze Pronunciation",
-                        elem_id="btn-analyze",
-                        variant="primary",
-                        interactive=not bool(STARTUP_ERROR),
-                    )
-
-            with gr.Column(visible=False, elem_id="screen_result", elem_classes=["screen-card"]) as screen_result:
-                result_content = gr.HTML("")
-                with gr.Row(elem_classes=["actions"]):
-                    try_again_btn = gr.Button("Try Again", elem_id="btn-try-again", variant="secondary")
-                    change_word_btn = gr.Button("Change Word", elem_id="btn-change-word", variant="primary")
-
-            target_dropdown.change(fn=on_target_change, inputs=[target_dropdown], outputs=[welcome_word_preview])
-            start_btn.click(
-                fn=start_practice,
-                inputs=[target_dropdown],
-                outputs=[screen_welcome, screen_practice, screen_result, practice_header, welcome_error],
-            )
-            back_btn.click(fn=go_to_welcome, outputs=[screen_welcome, screen_practice, screen_result])
-            analyze_btn.click(
-                fn=analyze_pronunciation,
-                inputs=[target_dropdown, audio_input],
-                outputs=[screen_practice, screen_result, result_content, practice_status],
-            )
-            try_again_btn.click(
-                fn=try_again,
-                inputs=[target_dropdown],
-                outputs=[screen_practice, screen_result, practice_header, audio_input, practice_status],
-            )
-            change_word_btn.click(
-                fn=change_word,
-                outputs=[screen_welcome, screen_practice, screen_result, audio_input],
-            )
-
+        with gr.Tabs():
+            with gr.Tab("Practice"):
+                build_practice_tab()
+            with gr.Tab("Analysis"):
+                build_analysis_tab()
     return demo
 
 
