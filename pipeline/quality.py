@@ -9,7 +9,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-AudioFeatures = dict[str, float | list[float]]
+AudioFeatureValue = float | list[float] | str | list[str] | bool | None
+AudioFeatures = dict[str, AudioFeatureValue]
 ReferenceVector = dict[str, float | list[float] | str]
 QualityStatus = Literal["ok", "bad"]
 
@@ -118,13 +119,19 @@ def _has_bad_noise(zcr_mean: float | None, rms_mean: float | None) -> list[str]:
     return issue_flags
 
 
+def _attach_quality_result_to_features(features: AudioFeatures, quality_result: RecordingQualityResult) -> None:
+    features["recording_quality_status"] = quality_result["status"]
+    features["issue_flags"] = quality_result["issue_flags"]
+    features["word_match"] = quality_result["word_match"]
+
+
 def evaluate_recording_quality(
     features: AudioFeatures,
     reference: ReferenceVector | None = None,
     audio_path: str | None = None,
     target_word: str | None = None,
 ) -> RecordingQualityResult:
-    """녹음 품질 문제를 발음 점수와 분리해서 판단합니다.
+    """녹음 품질 문제와 잘못된 단어 여부를 발음 점수와 분리해서 판단합니다.
 
     Args:
         audio_path: STT word match 확인에 사용할 녹음 경로. target_word와 함께 전달해야 동작한다.
@@ -147,6 +154,11 @@ def evaluate_recording_quality(
         if not word_match:
             issue_flags.append("word_mismatch")
 
-    audio_quality_flags = [f for f in issue_flags if f != "word_mismatch"]
-    status: QualityStatus = "bad" if audio_quality_flags else "ok"
-    return {"status": status, "issue_flags": issue_flags, "word_match": word_match}
+    status: QualityStatus = "bad" if issue_flags else "ok"
+    quality_result: RecordingQualityResult = {
+        "status": status,
+        "issue_flags": issue_flags,
+        "word_match": word_match,
+    }
+    _attach_quality_result_to_features(features, quality_result)
+    return quality_result
