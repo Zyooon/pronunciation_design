@@ -28,6 +28,13 @@ _KO_RELATIVE_PENALTY_SEVERE = 45.0
 _KO_RELATIVE_PENALTY_MULTIPLIER = 0.90
 _KO_RELATIVE_PENALTY_MAX = 26.0
 
+_MISMATCH_BASE_SCORE_START = 75.0
+_MISMATCH_BASE_SCORE_STRONG = 82.0
+_MISMATCH_RELATIVE_SCORE_START = 50.0
+_MISMATCH_RELATIVE_SCORE_STRONG = 47.0
+_MISMATCH_RELATIVE_SCORE_SEVERE = 44.0
+_MISMATCH_PENALTY_MAX = 14.0
+
 
 class ScoreResult(TypedDict):
     score: float
@@ -100,6 +107,23 @@ def compute_ko_reference_metrics(
         "relative_distance_score": round(float(relative_distance_score), 1),
         "korean_like_penalty": round(korean_like_penalty, 1),
     }
+
+
+def compute_mismatch_penalty(base_score: float, ko_metrics: dict[str, float]) -> float:
+    """base_score가 높은데 한국어식 reference 쪽에 가까운 경우 추가 감점한다."""
+    relative_score = ko_metrics.get("relative_distance_score")
+    if relative_score is None or base_score < _MISMATCH_BASE_SCORE_START:
+        return 0.0
+
+    penalty = 0.0
+    if relative_score < _MISMATCH_RELATIVE_SCORE_START:
+        penalty += (_MISMATCH_RELATIVE_SCORE_START - relative_score) * 0.45
+    if base_score >= _MISMATCH_BASE_SCORE_STRONG and relative_score < _MISMATCH_RELATIVE_SCORE_STRONG:
+        penalty += 4.0
+    if relative_score < _MISMATCH_RELATIVE_SCORE_SEVERE:
+        penalty += 4.0
+
+    return round(float(np.clip(penalty, 0.0, _MISMATCH_PENALTY_MAX)), 1)
 
 
 def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
@@ -249,8 +273,9 @@ def score_pronunciation(
     pronunciation_penalty = compute_pronunciation_penalty(sub_scores, phoneme_type)
     ko_metrics = compute_ko_reference_metrics(user_features, reference, ko_reference)
     korean_like_penalty = ko_metrics.get("korean_like_penalty", 0.0)
+    mismatch_penalty = compute_mismatch_penalty(base_score, ko_metrics)
 
-    total_penalty = quality_penalty + pronunciation_penalty + korean_like_penalty
+    total_penalty = quality_penalty + pronunciation_penalty + korean_like_penalty + mismatch_penalty
     duration_ratio = duration_ms / (ref_duration_ms + EPSILON)
     final_score = float(np.clip(base_score - total_penalty, 0.0, 100.0))
     feedback = get_feedback(final_score, phoneme, phoneme_type)
@@ -264,6 +289,7 @@ def score_pronunciation(
         "volume_penalty": round(volume_penalty, 1),
         "noise_penalty": round(noise_penalty, 1),
         "pronunciation_penalty": round(pronunciation_penalty, 1),
+        "mismatch_penalty": round(mismatch_penalty, 1),
         "total_penalty": round(total_penalty, 1),
         "final_score": round(final_score, 1),
         "duration_ratio": round(duration_ratio, 3),
