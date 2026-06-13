@@ -270,6 +270,23 @@ def _coerce_issue_flags(value: Any) -> list[str]:
     return []
 
 
+def _get_optional_string(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _get_quality_detail_fields(quality_result: RecordingQualityResult) -> dict[str, ScoreDetailValue]:
+    return {
+        "recording_quality_status": quality_result["status"],
+        "issue_flags": quality_result["issue_flags"],
+        "word_match": quality_result["word_match"],
+        "stt_status": quality_result.get("stt_status"),
+        "transcript": quality_result.get("transcript"),
+        "prompted_transcript": quality_result.get("prompted_transcript"),
+    }
+
+
 def _get_recording_quality_result(
     user_features: AudioFeatures,
     reference: ReferenceVector,
@@ -285,6 +302,9 @@ def _get_recording_quality_result(
             "status": status,
             "issue_flags": _coerce_issue_flags(user_features.get("issue_flags")),
             "word_match": word_match if isinstance(word_match, bool) else None,
+            "stt_status": _get_optional_string(user_features.get("stt_status")) or "unavailable",
+            "transcript": _get_optional_string(user_features.get("transcript")),
+            "prompted_transcript": _get_optional_string(user_features.get("prompted_transcript")),
         }
 
     return evaluate_recording_quality(user_features, reference)
@@ -304,11 +324,7 @@ def _build_quality_gate_result(quality_result: RecordingQualityResult) -> ScoreR
         "recording_quality_status": quality_result["status"],
         "issue_flags": issue_flags,
         "feedback": _get_quality_gate_feedback(issue_flags),
-        "details": {
-            "recording_quality_status": quality_result["status"],
-            "issue_flags": issue_flags,
-            "word_match": quality_result["word_match"],
-        },
+        "details": _get_quality_detail_fields(quality_result),
     }
 
 
@@ -372,11 +388,9 @@ def score_pronunciation(
         **sub_scores,
         **ko_metrics,
         **liquid_alt_metrics,
+        **_get_quality_detail_fields(quality_result),
         "base_score": round(base_score, 1),
         "quality_penalty": 0.0,
-        "recording_quality_status": quality_result["status"],
-        "issue_flags": quality_result["issue_flags"],
-        "word_match": quality_result["word_match"],
         "pronunciation_penalty": pronunciation_penalty,
         "korean_like_penalty": round(korean_like_penalty, 1),
         "liquid_alt_penalty": round(liquid_alt_penalty, 1),
