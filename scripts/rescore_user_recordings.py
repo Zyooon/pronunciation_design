@@ -18,10 +18,21 @@ from pipeline.features import extract_features
 from pipeline.quality import evaluate_recording_quality
 from pipeline.reference import load_reference_vectors
 from pipeline.scorer import score_pronunciation
+from pipeline.word_targets import attach_word_target_features, load_word_targets, should_extract_onset
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 KO_REFERENCE_PATH = PROJECT_ROOT / "data" / "ko_reference_vectors.json"
+ONSET_DETAIL_KEYS = (
+    "target_id",
+    "target_position",
+    "target_phoneme",
+    "onset_window_ms",
+    "onset_mfcc_mean",
+    "onset_zcr_mean",
+    "onset_rms_mean",
+    "onset_spectral_centroid_mean",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,7 +107,13 @@ def load_ko_vectors() -> dict:
         return json.load(f)
 
 
-def rescore_row(row: sqlite3.Row, en_vectors: dict, ko_vectors: dict, dry_run: bool) -> str:
+def attach_onset_details(details: dict[str, Any], features: dict[str, Any]) -> None:
+    for key in ONSET_DETAIL_KEYS:
+        if key in features:
+            details[key] = features[key]
+
+
+def rescore_row(row: sqlite3.Row, en_vectors: dict, ko_vectors: dict, word_targets: dict, dry_run: bool) -> str:
     word = row["word"]
     phoneme = row["phoneme"]
     recording_path = row["recording_path"]
@@ -117,7 +134,10 @@ def rescore_row(row: sqlite3.Row, en_vectors: dict, ko_vectors: dict, dry_run: b
     ko_reference = ko_vectors.get(phoneme)
 
     waveform, sr = load_trimmed_audio(audio_path)
-    features = extract_features(waveform, sr)
+    include_onset = should_extract_onset(word, phoneme, word_targets)
+    features = extract_features(waveform, sr, include_onset=include_onset)
+    attach_word_target_features(features, word, phoneme, word_targets)
+
     quality_result = evaluate_recording_quality(
         features=features,
         reference=reference,
@@ -133,13 +153,14 @@ def rescore_row(row: sqlite3.Row, en_vectors: dict, ko_vectors: dict, dry_run: b
         recording_quality_result=quality_result,
     )
     score = score_result["score"]
-    details = score_result.get("details", {})
+    details = dict(score_result.get("details", {}))
+    attach_onset_details(details, features)
 
     original_created_at = row["original_created_at"] or row["created_at"]
 
     if dry_run:
         log.info(
-            "[dry-run] id=%s word=%s label=%s old=%s new=%s quality=%s issues=%s original_created_at=%s",
+            "[dry-run] id=%s word=%s label=%s old=%s new=%s quality=%s issues=%s onset=%s original_created_at=%s",
             row["id"],
             word,
             row["test_label"] or "NULL",
@@ -147,6 +168,7 @@ def rescore_row(row: sqlite3.Row, en_vectors: dict, ko_vectors: dict, dry_run: b
             format_score(score),
             score_result.get("recording_quality_status"),
             score_result.get("issue_flags"),
+            include_onset,
             original_created_at,
         )
         return "dry_run"
@@ -168,13 +190,14 @@ def rescore_row(row: sqlite3.Row, en_vectors: dict, ko_vectors: dict, dry_run: b
         created_at=original_created_at,
     )
     log.info(
-        "저장 완료: id=%s word=%s label=%s new=%s quality=%s issues=%s",
+        "저장 완료: id=%s word=%s label=%s new=%s quality=%s issues=%s onset=%s",
         row["id"],
         word,
         row["test_label"] or "NULL",
         format_score(score),
         score_result.get("recording_quality_status"),
         score_result.get("issue_flags"),
+        include_onset,
     )
     return "ok"
 
@@ -195,10 +218,11 @@ def main() -> None:
 
     en_vectors = load_reference_vectors()
     ko_vectors = load_ko_vectors()
+    word_targets = load_word_targets()
     counts: dict[str, int] = {}
     for row in rows:
         try:
-            status = rescore_row(row, en_vectors, ko_vectors, args.dry_run)
+            status = rescore_row(row, en_vectors, ko_vectors, word_targets, args.dry_run)
         except Exception as exc:
             log.warning("스킵: id=%s detail=%s", row["id"], exc)
             status = "skip"
