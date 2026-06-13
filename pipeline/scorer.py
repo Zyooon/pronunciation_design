@@ -36,6 +36,12 @@ _MISMATCH_RELATIVE_SCORE_STRONG = 47.0
 _MISMATCH_RELATIVE_SCORE_SEVERE = 44.0
 _MISMATCH_PENALTY_MAX = 14.0
 
+_LIQUID_ALT_SCORE_START = 52.0
+_LIQUID_ALT_SCORE_STRONG = 47.0
+_LIQUID_ALT_SCORE_SEVERE = 42.0
+_LIQUID_ALT_PENALTY_MULTIPLIER = 0.70
+_LIQUID_ALT_PENALTY_MAX = 14.0
+
 
 class ScoreResult(TypedDict):
     score: float
@@ -79,29 +85,18 @@ def _mfcc_distance(user_features: AudioFeatures, reference: ReferenceVector) -> 
         return None
 
 
-def compute_ko_reference_metrics(
-    user_features: AudioFeatures,
-    en_reference: ReferenceVector,
-    ko_reference: ReferenceVector | None,
-) -> dict[str, float]:
-    """원어민 reference와 한국어식 reference 사이의 상대 위치 지표를 계산한다."""
+def compute_ko_reference_metrics(user_features: AudioFeatures, en_reference: ReferenceVector, ko_reference: ReferenceVector | None) -> dict[str, float]:
     en_distance = _mfcc_distance(user_features, en_reference)
     ko_distance = _mfcc_distance(user_features, ko_reference) if ko_reference else None
-
     if en_distance is None or ko_distance is None:
         return {}
-
     relative_distance_score = ko_distance / (en_distance + ko_distance + EPSILON) * 100
-    korean_like_penalty = max(
-        0.0,
-        (_KO_RELATIVE_PENALTY_START - relative_distance_score) * _KO_RELATIVE_PENALTY_MULTIPLIER,
-    )
+    korean_like_penalty = max(0.0, (_KO_RELATIVE_PENALTY_START - relative_distance_score) * _KO_RELATIVE_PENALTY_MULTIPLIER)
     if relative_distance_score < _KO_RELATIVE_PENALTY_STRONG:
         korean_like_penalty += 3.0
     if relative_distance_score < _KO_RELATIVE_PENALTY_SEVERE:
         korean_like_penalty += 5.0
     korean_like_penalty = float(np.clip(korean_like_penalty, 0.0, _KO_RELATIVE_PENALTY_MAX))
-
     return {
         "en_distance": round(en_distance, 4),
         "ko_distance": round(ko_distance, 4),
@@ -111,23 +106,37 @@ def compute_ko_reference_metrics(
 
 
 def compute_mismatch_penalty(base_score: float, ko_metrics: dict[str, float]) -> float:
-    """base_score가 높은데 한국어식 reference 쪽에 가까운 경우 추가 감점한다."""
     relative_score = ko_metrics.get("relative_distance_score")
     if relative_score is None or base_score < _MISMATCH_BASE_SCORE_START:
         return 0.0
-
     penalty = 0.0
-
     if relative_score < _MISMATCH_RELATIVE_SCORE_START:
         penalty += (_MISMATCH_RELATIVE_SCORE_START - relative_score) * 0.8
-
     if base_score >= _MISMATCH_BASE_SCORE_STRONG and relative_score < _MISMATCH_RELATIVE_SCORE_STRONG:
         penalty += 3.0
-
     if base_score >= _MISMATCH_BASE_SCORE_STRONG and relative_score < _MISMATCH_RELATIVE_SCORE_SEVERE:
         penalty += 5.0
-
     return round(float(np.clip(penalty, 0.0, _MISMATCH_PENALTY_MAX)), 1)
+
+
+def compute_liquid_alt_metrics(user_features: AudioFeatures, target_reference: ReferenceVector, alt_reference: ReferenceVector | None) -> dict[str, float]:
+    target_distance = _mfcc_distance(user_features, target_reference)
+    alt_distance = _mfcc_distance(user_features, alt_reference) if alt_reference else None
+    if target_distance is None or alt_distance is None:
+        return {}
+    alt_relative_score = alt_distance / (target_distance + alt_distance + EPSILON) * 100
+    liquid_alt_penalty = max(0.0, (_LIQUID_ALT_SCORE_START - alt_relative_score) * _LIQUID_ALT_PENALTY_MULTIPLIER)
+    if alt_relative_score < _LIQUID_ALT_SCORE_STRONG:
+        liquid_alt_penalty += 3.0
+    if alt_relative_score < _LIQUID_ALT_SCORE_SEVERE:
+        liquid_alt_penalty += 5.0
+    liquid_alt_penalty = float(np.clip(liquid_alt_penalty, 0.0, _LIQUID_ALT_PENALTY_MAX))
+    return {
+        "liquid_target_distance": round(target_distance, 4),
+        "liquid_alt_distance": round(alt_distance, 4),
+        "liquid_alt_relative_score": round(float(alt_relative_score), 1),
+        "liquid_alt_penalty": round(liquid_alt_penalty, 1),
+    }
 
 
 def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
@@ -136,29 +145,16 @@ def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dic
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     rms_score = ratio_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
     final_score = mfcc_score * 0.70 + duration_score * 0.15 + centroid_score * 0.10 + rms_score * 0.05
-    return {
-        "score": round(float(final_score), 1),
-        "mfcc_score": round(float(mfcc_score), 1),
-        "duration_score": round(float(duration_score), 1),
-        "spectral_centroid_score": round(float(centroid_score), 1),
-        "rms_score": round(float(rms_score), 1),
-    }
+    return {"score": round(float(final_score), 1), "mfcc_score": round(float(mfcc_score), 1), "duration_score": round(float(duration_score), 1), "spectral_centroid_score": round(float(centroid_score), 1), "rms_score": round(float(rms_score), 1)}
 
 
 def score_duration_focused_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
-    """/i/와 /iː/처럼 길이 구분이 핵심인 모음을 채점한다."""
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     rms_score = ratio_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
     final_score = mfcc_score * 0.50 + duration_score * 0.35 + centroid_score * 0.10 + rms_score * 0.05
-    return {
-        "score": round(float(final_score), 1),
-        "mfcc_score": round(float(mfcc_score), 1),
-        "duration_score": round(float(duration_score), 1),
-        "spectral_centroid_score": round(float(centroid_score), 1),
-        "rms_score": round(float(rms_score), 1),
-    }
+    return {"score": round(float(final_score), 1), "mfcc_score": round(float(mfcc_score), 1), "duration_score": round(float(duration_score), 1), "spectral_centroid_score": round(float(centroid_score), 1), "rms_score": round(float(rms_score), 1)}
 
 
 def score_consonant(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
@@ -166,12 +162,7 @@ def score_consonant(user_features: AudioFeatures, reference: ReferenceVector) ->
     zcr_score = ratio_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     final_score = mfcc_score * 0.55 + zcr_score * 0.35 + centroid_score * 0.10
-    return {
-        "score": round(float(final_score), 1),
-        "mfcc_score": round(float(mfcc_score), 1),
-        "zcr_score": round(float(zcr_score), 1),
-        "spectral_centroid_score": round(float(centroid_score), 1),
-    }
+    return {"score": round(float(final_score), 1), "mfcc_score": round(float(mfcc_score), 1), "zcr_score": round(float(zcr_score), 1), "spectral_centroid_score": round(float(centroid_score), 1)}
 
 
 def score_liquid(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
@@ -180,13 +171,7 @@ def score_liquid(user_features: AudioFeatures, reference: ReferenceVector) -> di
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     zcr_score = ratio_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
     final_score = mfcc_score * 0.75 + duration_score * 0.15 + centroid_score * 0.10
-    return {
-        "score": round(float(final_score), 1),
-        "mfcc_score": round(float(mfcc_score), 1),
-        "duration_score": round(float(duration_score), 1),
-        "spectral_centroid_score": round(float(centroid_score), 1),
-        "zcr_score": round(float(zcr_score), 1),
-    }
+    return {"score": round(float(final_score), 1), "mfcc_score": round(float(mfcc_score), 1), "duration_score": round(float(duration_score), 1), "spectral_centroid_score": round(float(centroid_score), 1), "zcr_score": round(float(zcr_score), 1)}
 
 
 def compute_quality_penalty(duration_ms: float, rms_mean: float, zcr_mean: float, ref_duration_ms: float) -> tuple[float, float, float]:
@@ -202,21 +187,18 @@ def compute_quality_penalty(duration_ms: float, rms_mean: float, zcr_mean: float
             duration_penalty = 4.0
         else:
             duration_penalty = 0.0
-
     if rms_mean < _RMS_SILENT:
         volume_penalty = 35.0
     elif rms_mean < _RMS_VERY_QUIET:
         volume_penalty = 10.0
     else:
         volume_penalty = 0.0
-
     if zcr_mean > _ZCR_ACTIVE_NOISE and rms_mean < _RMS_LOW_FOR_ZCR_CHECK:
         noise_penalty = 20.0
     elif zcr_mean > _ZCR_EXTREME:
         noise_penalty = 10.0
     else:
         noise_penalty = 0.0
-
     return duration_penalty, volume_penalty, noise_penalty
 
 
@@ -241,18 +223,7 @@ def get_feedback(score: float, phoneme: str, phoneme_type: str) -> str:
         return f"/{phoneme}/ 발음이 기준 발음과 꽤 비슷합니다."
     if score >= 70:
         return f"/{phoneme}/ 발음은 괜찮지만 조금 더 또렷하게 연습하면 좋습니다."
-    phoneme_tips = {
-        "θ": "혀끝을 윗니와 아랫니 사이에 가볍게 두고 공기를 빼보세요.",
-        "f": "윗니를 아랫입술에 가볍게 대고 바람을 내보내세요.",
-        "v": "윗니와 아랫입술을 가볍게 대고 목의 울림을 함께 내보내세요.",
-        "i": "짧고 가볍게 발음하세요. 너무 길게 끌지 않는 것이 중요합니다.",
-        "iː": "입꼬리를 옆으로 당기고 소리를 조금 더 길게 유지해보세요.",
-        "æ": "입을 조금 더 크게 벌리고 턱을 낮춰서 발음해보세요.",
-        "ə": "강하게 말하지 말고 짧고 약하게 지나가듯 발음해보세요.",
-        "oʊ": "입술을 둥글게 모으며 뒤로 미끄러지듯 발음해보세요.",
-        "r": "혀끝을 입천장에 붙이지 말고 뒤로 살짝 말아보세요.",
-        "l": "혀끝을 윗잇몸 뒤쪽에 가볍게 붙여보세요.",
-    }
+    phoneme_tips = {"θ": "혀끝을 윗니와 아랫니 사이에 가볍게 두고 공기를 빼보세요.", "f": "윗니를 아랫입술에 가볍게 대고 바람을 내보내세요.", "v": "윗니와 아랫입술을 가볍게 대고 목의 울림을 함께 내보내세요.", "i": "짧고 가볍게 발음하세요. 너무 길게 끌지 않는 것이 중요합니다.", "iː": "입꼬리를 옆으로 당기고 소리를 조금 더 길게 유지해보세요.", "æ": "입을 조금 더 크게 벌리고 턱을 낮춰서 발음해보세요.", "ə": "강하게 말하지 말고 짧고 약하게 지나가듯 발음해보세요.", "oʊ": "입술을 둥글게 모으며 뒤로 미끄러지듯 발음해보세요.", "r": "혀끝을 입천장에 붙이지 말고 뒤로 살짝 말아보세요.", "l": "혀끝을 윗잇몸 뒤쪽에 가볍게 붙여보세요."}
     tip = phoneme_tips.get(phoneme)
     if tip:
         return f"/{phoneme}/ 발음 차이가 큽니다. {tip}"
@@ -274,53 +245,26 @@ def _build_phoneme_score_details(user_features: AudioFeatures, reference: Refere
     return {"score": round(float(mfcc_score), 1), "mfcc_score": round(float(mfcc_score), 1)}
 
 
-def score_pronunciation(
-    user_features: AudioFeatures,
-    reference: ReferenceVector,
-    phoneme: str,
-    ko_reference: ReferenceVector | None = None,
-) -> ScoreResult:
+def score_pronunciation(user_features: AudioFeatures, reference: ReferenceVector, phoneme: str, ko_reference: ReferenceVector | None = None, liquid_alt_reference: ReferenceVector | None = None) -> ScoreResult:
     phoneme_type = str(reference.get("phoneme_type", "unknown"))
     sub_scores = _build_phoneme_score_details(user_features, reference, phoneme_type, phoneme)
     base_score = float(sub_scores.pop("score"))
-
     duration_ms = float(user_features.get("duration_ms", 0))
     rms_mean = float(user_features.get("rms_mean", 0))
     zcr_mean = float(user_features.get("zcr_mean", 0))
     spectral_centroid_mean = float(user_features.get("spectral_centroid_mean", 0))
     ref_duration_ms = float(reference.get("duration_ms", 500))
-
     duration_penalty, volume_penalty, noise_penalty = compute_quality_penalty(duration_ms, rms_mean, zcr_mean, ref_duration_ms)
     quality_penalty = duration_penalty + volume_penalty + noise_penalty
     pronunciation_penalty = compute_pronunciation_penalty(sub_scores, phoneme_type)
-    if phoneme in _DURATION_FOCUSED_PHONEMES:
-        ko_metrics = {}
-    else:
-        ko_metrics = compute_ko_reference_metrics(user_features, reference, ko_reference)
+    ko_metrics = {} if phoneme in _DURATION_FOCUSED_PHONEMES or phoneme in _LIQUID_PHONEMES else compute_ko_reference_metrics(user_features, reference, ko_reference)
+    liquid_alt_metrics = compute_liquid_alt_metrics(user_features, reference, liquid_alt_reference) if phoneme in _LIQUID_PHONEMES else {}
     korean_like_penalty = ko_metrics.get("korean_like_penalty", 0.0)
     mismatch_penalty = compute_mismatch_penalty(base_score, ko_metrics)
-
-    total_penalty = quality_penalty + pronunciation_penalty + korean_like_penalty + mismatch_penalty
+    liquid_alt_penalty = liquid_alt_metrics.get("liquid_alt_penalty", 0.0)
+    total_penalty = quality_penalty + pronunciation_penalty + korean_like_penalty + mismatch_penalty + liquid_alt_penalty
     duration_ratio = duration_ms / (ref_duration_ms + EPSILON)
     final_score = float(np.clip(base_score - total_penalty, 0.0, 100.0))
     feedback = get_feedback(final_score, phoneme, phoneme_type)
-
-    details: dict[str, float] = {
-        **sub_scores,
-        **ko_metrics,
-        "base_score": round(base_score, 1),
-        "quality_penalty": round(quality_penalty, 1),
-        "duration_penalty": round(duration_penalty, 1),
-        "volume_penalty": round(volume_penalty, 1),
-        "noise_penalty": round(noise_penalty, 1),
-        "pronunciation_penalty": round(pronunciation_penalty, 1),
-        "mismatch_penalty": round(mismatch_penalty, 1),
-        "total_penalty": round(total_penalty, 1),
-        "final_score": round(final_score, 1),
-        "duration_ratio": round(duration_ratio, 3),
-        "rms_mean": round(rms_mean, 6),
-        "zcr_mean": round(zcr_mean, 6),
-        "spectral_centroid_mean": round(spectral_centroid_mean, 2),
-    }
-
+    details: dict[str, float] = {**sub_scores, **ko_metrics, **liquid_alt_metrics, "base_score": round(base_score, 1), "quality_penalty": round(quality_penalty, 1), "duration_penalty": round(duration_penalty, 1), "volume_penalty": round(volume_penalty, 1), "noise_penalty": round(noise_penalty, 1), "pronunciation_penalty": round(pronunciation_penalty, 1), "mismatch_penalty": round(mismatch_penalty, 1), "liquid_alt_penalty": round(liquid_alt_penalty, 1), "total_penalty": round(total_penalty, 1), "final_score": round(final_score, 1), "duration_ratio": round(duration_ratio, 3), "rms_mean": round(rms_mean, 6), "zcr_mean": round(zcr_mean, 6), "spectral_centroid_mean": round(spectral_centroid_mean, 2)}
     return {"score": round(final_score, 1), "feedback": feedback, "details": details}
