@@ -9,6 +9,7 @@ AudioFeatures = dict[str, float | list[float]]
 ReferenceVector = dict[str, float | list[float] | str]
 
 _LIQUID_PHONEMES: frozenset[str] = frozenset({"r", "l"})
+_DURATION_FOCUSED_PHONEMES: frozenset[str] = frozenset({"i", "iː"})
 
 _MIN_DURATION_MS       = 150.0
 _RMS_SILENT            = 0.005
@@ -144,6 +145,22 @@ def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dic
     }
 
 
+def score_duration_focused_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
+    """/i/와 /iː/처럼 길이 구분이 핵심인 모음을 채점한다."""
+    mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
+    duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
+    centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
+    rms_score = ratio_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
+    final_score = mfcc_score * 0.50 + duration_score * 0.35 + centroid_score * 0.10 + rms_score * 0.05
+    return {
+        "score": round(float(final_score), 1),
+        "mfcc_score": round(float(mfcc_score), 1),
+        "duration_score": round(float(duration_score), 1),
+        "spectral_centroid_score": round(float(centroid_score), 1),
+        "rms_score": round(float(rms_score), 1),
+    }
+
+
 def score_consonant(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
     zcr_score = ratio_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
@@ -245,6 +262,8 @@ def get_feedback(score: float, phoneme: str, phoneme_type: str) -> str:
 
 
 def _build_phoneme_score_details(user_features: AudioFeatures, reference: ReferenceVector, phoneme_type: str, phoneme: str) -> dict[str, float]:
+    if phoneme in _DURATION_FOCUSED_PHONEMES:
+        return score_duration_focused_vowel(user_features, reference)
     if phoneme in _LIQUID_PHONEMES:
         return score_liquid(user_features, reference)
     if phoneme_type == "vowel":
@@ -274,7 +293,10 @@ def score_pronunciation(
     duration_penalty, volume_penalty, noise_penalty = compute_quality_penalty(duration_ms, rms_mean, zcr_mean, ref_duration_ms)
     quality_penalty = duration_penalty + volume_penalty + noise_penalty
     pronunciation_penalty = compute_pronunciation_penalty(sub_scores, phoneme_type)
-    ko_metrics = compute_ko_reference_metrics(user_features, reference, ko_reference)
+    if phoneme in _DURATION_FOCUSED_PHONEMES:
+        ko_metrics = {}
+    else:
+        ko_metrics = compute_ko_reference_metrics(user_features, reference, ko_reference)
     korean_like_penalty = ko_metrics.get("korean_like_penalty", 0.0)
     mismatch_penalty = compute_mismatch_penalty(base_score, ko_metrics)
 
