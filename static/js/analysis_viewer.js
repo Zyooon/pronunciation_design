@@ -417,8 +417,8 @@ async function loadUserResults() {
     if (!data.exists) {
       wrap.innerHTML = `
         <div class="no-data-msg">
-          data/results.csv 파일이 없습니다.<br/>
-          실제 녹음 후 결과 저장이 되는지 확인하세요.
+          data/pronunciation.db 파일이 없습니다.<br/>
+          앱에서 녹음 후 분석을 1회 이상 실행하면 자동으로 생성됩니다.
         </div>`;
       return;
     }
@@ -426,7 +426,7 @@ async function loadUserResults() {
     if (data.error) {
       wrap.innerHTML = `
         <div class="no-data-msg">
-          results.csv 읽기 오류: ${escHtml(data.error)}<br/>
+          DB 읽기 오류: ${escHtml(data.error)}<br/>
           path: ${escHtml(data.path)}
         </div>`;
       return;
@@ -435,8 +435,8 @@ async function loadUserResults() {
     if (!data.rows || data.rows.length === 0) {
       wrap.innerHTML = `
         <div class="no-data-msg">
-          results.csv 파일은 있지만 저장된 row가 없습니다.<br/>
-          path: ${escHtml(data.path)}
+          pronunciation.db는 있지만 ${escHtml(data.table ?? "user_recordings")} 테이블에 저장된 결과가 없습니다.<br/>
+          앱에서 녹음 후 분석을 먼저 실행해보세요.
         </div>`;
       return;
     }
@@ -452,11 +452,11 @@ async function loadUserResults() {
 
     wrap.innerHTML = `
       <div class="meta-box">
-        <strong>path:</strong> ${escHtml(data.path)}
+        <strong>table:</strong> ${escHtml(data.table ?? "")}
         &nbsp;·&nbsp;
-        <strong>rows:</strong> ${data.row_count}
+        <strong>전체 rows:</strong> ${data.row_count}
         &nbsp;·&nbsp;
-        <strong>columns:</strong> ${columns.length}
+        <strong>표시:</strong> 최근 ${data.rows.length}개
       </div>
       <div class="table-wrap">
         <table class="data-table">

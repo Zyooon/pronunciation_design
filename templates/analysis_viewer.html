@@ -20,7 +20,7 @@
         ("reference_vectors.json",           file_status.reference_vectors,  "uv run python scripts/build_reference.py"),
         ("comparison_results.json",          file_status.comparison_results, "uv run python scripts/compare_en_ko.py"),
         ("comparison_analysis_report.json",  file_status.analysis_report,    "uv run python scripts/analyze_comparison_results.py"),
-        ("results.csv",                      file_status.results_csv,        None),
+        ("pronunciation.db",                 file_status.db,                 None),
       ] %}
       {% for name, exists, cmd in badges %}
         <span class="file-badge {% if exists %}ok{% else %}missing{% endif %}"

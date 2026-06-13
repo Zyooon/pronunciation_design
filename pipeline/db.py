@@ -1,7 +1,11 @@
 import json
+import logging
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict
+
+log = logging.getLogger(__name__)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -159,6 +163,102 @@ def _build_comparison_insert_values(comparison_result: ComparisonResultDict) -> 
         json.dumps(comparison_result["en_mfcc_mean_json"], ensure_ascii=False),
         json.dumps(comparison_result["ko_mfcc_mean_json"], ensure_ascii=False),
     )
+
+
+_CREATE_USER_RECORDINGS_SQL = """
+CREATE TABLE IF NOT EXISTS user_recordings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    word TEXT NOT NULL,
+    phoneme TEXT,
+    score REAL,
+    grade TEXT,
+    feedback TEXT,
+    recording_path TEXT,
+    test_label TEXT,
+    duration_ms REAL,
+    rms_mean REAL,
+    zcr_mean REAL,
+    spectral_centroid_mean REAL,
+    mfcc_distance REAL
+)
+"""
+
+_USER_RECORDINGS_OPTIONAL_COLUMNS: list[tuple[str, str]] = [
+    ("grade", "TEXT"),
+    ("recording_path", "TEXT"),
+    ("test_label", "TEXT"),
+    ("duration_ms", "REAL"),
+    ("rms_mean", "REAL"),
+    ("zcr_mean", "REAL"),
+    ("spectral_centroid_mean", "REAL"),
+    ("mfcc_distance", "REAL"),
+]
+
+
+def ensure_user_recordings_table(db_path: str | Path = DEFAULT_DB_PATH) -> None:
+    """user_recordings 테이블을 생성하고 누락 컬럼을 안전하게 추가한다."""
+    with get_connection(db_path) as conn:
+        conn.execute(_CREATE_USER_RECORDINGS_SQL)
+        existing_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(user_recordings)")
+        }
+        for col_name, col_type in _USER_RECORDINGS_OPTIONAL_COLUMNS:
+            if col_name not in existing_cols:
+                conn.execute(
+                    f"ALTER TABLE user_recordings ADD COLUMN {col_name} {col_type}"
+                )
+        conn.commit()
+
+
+def save_user_recording_result(
+    *,
+    word: str,
+    phoneme: str | None,
+    score: float | None,
+    grade: str | None,
+    feedback: str | None,
+    recording_path: str | None,
+    duration_ms: float | None = None,
+    rms_mean: float | None = None,
+    zcr_mean: float | None = None,
+    spectral_centroid_mean: float | None = None,
+    mfcc_distance: float | None = None,
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> None:
+    """사용자 녹음 결과를 user_recordings 테이블에 저장한다.
+
+    저장 실패 시 예외를 전파하지 않고 에러 로그만 남긴다.
+    test_label은 항상 NULL로 저장한다.
+    """
+    try:
+        ensure_user_recordings_table(db_path)
+        created_at = datetime.now(timezone.utc).isoformat()
+
+        with get_connection(db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO user_recordings (
+                    created_at, word, phoneme, score, grade, feedback,
+                    recording_path, test_label,
+                    duration_ms, rms_mean, zcr_mean, spectral_centroid_mean, mfcc_distance
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+                """,
+                (
+                    created_at, word, phoneme, score, grade, feedback,
+                    recording_path,
+                    duration_ms, rms_mean, zcr_mean, spectral_centroid_mean, mfcc_distance,
+                ),
+            )
+            conn.commit()
+
+    except Exception:
+        log.error(
+            "user_recordings 저장 실패: word=%s, phoneme=%s",
+            word, phoneme,
+            exc_info=True,
+        )
 
 
 def insert_comparison_result(

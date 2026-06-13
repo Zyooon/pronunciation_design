@@ -4,9 +4,9 @@
 실행: uv run uvicorn analysis_viewer:app --host 127.0.0.1 --port 9000
 """
 
-import csv
 import json
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -21,10 +21,17 @@ log = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_ROOT / "data"
 
-REFERENCE_VECTORS_PATH      = DATA_DIR / "reference_vectors.json"
-COMPARISON_RESULTS_PATH     = DATA_DIR / "comparison_results.json"
-ANALYSIS_REPORT_PATH        = DATA_DIR / "comparison_analysis_report.json"
-RESULTS_CSV_PATH            = DATA_DIR / "results.csv"
+REFERENCE_VECTORS_PATH  = DATA_DIR / "reference_vectors.json"
+COMPARISON_RESULTS_PATH = DATA_DIR / "comparison_results.json"
+ANALYSIS_REPORT_PATH    = DATA_DIR / "comparison_analysis_report.json"
+DB_PATH                 = DATA_DIR / "pronunciation.db"
+
+USER_RECORDINGS_TABLE   = "user_recordings"
+USER_RECORDINGS_COLUMNS = [
+    "id", "created_at", "word", "phoneme", "score", "grade",
+    "feedback", "recording_path", "test_label",
+]
+USER_RECORDINGS_LIMIT   = 200
 
 app = FastAPI(title="Pronunciation Analysis Viewer", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "static"), name="static")
@@ -96,8 +103,8 @@ async def get_errors() -> Response:
 
 @app.get("/api/user-results")
 async def get_user_results() -> Response:
-    """results.csv 상태와 내용을 JSON으로 반환한다."""
-    payload = load_user_results_csv(RESULTS_CSV_PATH)
+    """user_recordings 테이블의 최근 결과를 JSON으로 반환한다."""
+    payload = load_user_results_from_db(DB_PATH, limit=USER_RECORDINGS_LIMIT)
     return _json_response(payload)
 
 
@@ -135,54 +142,64 @@ def load_analysis_report(path: Path) -> dict[str, Any] | None:
     return data if data else None
 
 
-def load_user_results_csv(path: Path) -> dict[str, Any]:
-    """results.csv 상태와 row 목록을 반환한다."""
+def load_user_results_from_db(
+    db_path: Path,
+    limit: int = USER_RECORDINGS_LIMIT,
+) -> dict[str, Any]:
+    """user_recordings 테이블에서 최근 결과를 조회해 반환한다."""
     result: dict[str, Any] = {
-        "exists": path.exists(),
-        "path": str(path),
+        "exists": db_path.exists(),
+        "path": str(db_path),
+        "table": USER_RECORDINGS_TABLE,
         "row_count": 0,
         "columns": [],
         "rows": [],
         "error": None,
     }
 
-    if not path.exists():
+    if not db_path.exists():
         return result
 
+    conn: sqlite3.Connection | None = None
     try:
-        raw = path.read_text(encoding="utf-8-sig")
-        non_empty_lines = [l for l in raw.splitlines() if l.strip()]
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
 
-        if not non_empty_lines:
-            result["error"] = "CSV 파일이 비어 있습니다."
-            return result
-
-        if len(non_empty_lines) == 1:
-            result["error"] = (
-                "CSV 파일에 줄바꿈이 없습니다. "
-                "헤더와 데이터가 한 줄로 합쳐진 손상된 파일입니다. "
-                "파일을 삭제하면 다음 녹음 시 자동으로 재생성됩니다."
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
             )
+        }
+        if USER_RECORDINGS_TABLE not in tables:
+            result["error"] = f"{USER_RECORDINGS_TABLE} 테이블이 없습니다."
             return result
 
-        with path.open("r", encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            columns = list(reader.fieldnames or [])
-            rows = [row for row in reader]
+        col_list = ", ".join(USER_RECORDINGS_COLUMNS)
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                f"SELECT {col_list} FROM {USER_RECORDINGS_TABLE} ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )
+        ]
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM {USER_RECORDINGS_TABLE}"
+        ).fetchone()[0]
 
-        result["columns"] = columns
+        result["row_count"] = total
+        result["columns"] = USER_RECORDINGS_COLUMNS
         result["rows"] = rows
-        result["row_count"] = len(rows)
-
-        if not columns:
-            result["error"] = "CSV header가 없습니다."
-
         return result
 
-    except Exception as e:
-        log.error("CSV 읽기 실패: path=%s, error=%s", path, e)
+    except sqlite3.Error as e:
+        log.error("DB 읽기 실패: path=%s, error=%s", db_path, e)
         result["error"] = str(e)
         return result
+
+    finally:
+        if conn:
+            conn.close()
 
 
 # ── 데이터 빌더 ──────────────────────────────────────────────────────────────
@@ -439,7 +456,7 @@ def _build_file_status() -> dict[str, bool]:
         "reference_vectors":  REFERENCE_VECTORS_PATH.exists(),
         "comparison_results": COMPARISON_RESULTS_PATH.exists(),
         "analysis_report":    ANALYSIS_REPORT_PATH.exists(),
-        "results_csv":        RESULTS_CSV_PATH.exists(),
+        "db":                 DB_PATH.exists(),
     }
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import Response
 
+from pipeline.db import save_user_recording_result
 from webapp.services.pronunciation_facade import analyze_audio, load_word_list
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,16 @@ async def analyze_pronunciation(
 
     try:
         result = analyze_audio(word=word, phoneme=phoneme, audio_path=save_path)
+
+        save_user_recording_result(
+            word=word,
+            phoneme=phoneme,
+            score=result.score,
+            grade=_derive_grade(result.score),
+            feedback=result.feedback,
+            recording_path=str(save_path),
+        )
+
         body = json.dumps(result.to_dict(), ensure_ascii=False)
         return Response(content=body, media_type="application/json; charset=utf-8")
 
@@ -73,6 +84,14 @@ async def analyze_pronunciation(
 
 
 # ── 헬퍼 ────────────────────────────────────────────────────────────────────
+
+def _derive_grade(score: float) -> str:
+    if score >= 85:
+        return "Excellent"
+    if score >= 70:
+        return "Good"
+    return "Needs Practice"
+
 
 def _save_record_audio(data: bytes, word: str, suffix: str) -> Path:
     """오디오 bytes를 data/reference_ko/record/{word}{suffix}로 저장하고 경로를 반환한다."""
