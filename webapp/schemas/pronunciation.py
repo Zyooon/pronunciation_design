@@ -23,7 +23,7 @@ class AnalysisResultDto:
 
     word: str
     phoneme: str
-    score: float
+    score: float | None
     feedback: str
     details: dict
 

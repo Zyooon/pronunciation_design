@@ -124,7 +124,9 @@ def normalize_test_label(value: str | None, *, enabled: bool) -> str | None:
     return "unlabeled"
 
 
-def _derive_grade(score: float) -> str:
+def _derive_grade(score: float | None) -> str | None:
+    if score is None:
+        return None
     if score >= 85:
         return "Excellent"
     if score >= 70:
