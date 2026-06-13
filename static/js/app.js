@@ -43,7 +43,7 @@ async function initApp() {
 function initTestLabelUi() {
   if (typeof ENABLE_TEST_LABELS === "undefined" || !ENABLE_TEST_LABELS) return;
   const section = document.getElementById("test-label-section");
-  if (section) section.style.display = "";
+  if (section) section.style.display = "block";
 }
 
 function checkBrowserSupport() {
@@ -291,9 +291,9 @@ async function onAnalyzeClick() {
     formData.append("word",    selectedWord.word);
     formData.append("phoneme", selectedWord.phoneme);
     formData.append("audio_file", audioBlob, getAudioFilename(audioBlob));
-    if (typeof ENABLE_TEST_LABELS !== "undefined" && ENABLE_TEST_LABELS) {
-      formData.append("test_label", selectedTestLabel || "unlabeled");
-    }
+    const labelSelect = document.getElementById("test-label-select");
+    const testLabel = labelSelect ? labelSelect.value : "unlabeled";
+    formData.append("test_label", testLabel);
 
     const result = await analyzePronunciation(formData);
     showResult(result);

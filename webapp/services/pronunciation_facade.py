@@ -1,5 +1,8 @@
 import logging
+from dataclasses import dataclass
 from pathlib import Path
+
+import numpy as np
 
 from pipeline.audio import load_trimmed_audio
 from pipeline.features import extract_features
@@ -8,6 +11,17 @@ from pipeline.scorer import score_pronunciation
 from webapp.schemas.pronunciation import AnalysisResultDto, WordDto
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class AudioFeaturesSnapshot:
+    """분석 pipeline에서 추출한 원시 feature 값 모음."""
+
+    duration_ms: float | None
+    rms_mean: float | None
+    zcr_mean: float | None
+    spectral_centroid_mean: float | None
+    mfcc_distance: float | None
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORDS_PATH = PROJECT_ROOT / "data" / "words.txt"
@@ -52,13 +66,19 @@ def load_word_list() -> list[WordDto]:
 def analyze_audio(word: str, phoneme: str, audio_path: Path) -> AnalysisResultDto:
     """음성 파일을 pipeline으로 분석하고 결과를 반환한다.
 
-    Args:
-        word: 타겟 영어 단어
-        phoneme: 타겟 음소
-        audio_path: 임시 저장된 오디오 파일 경로
+    Raises:
+        KeyError: 해당 음소의 reference vector가 없을 때
+        FileNotFoundError: reference_vectors.json 또는 오디오 파일이 없을 때
+        ValueError: 오디오가 비어 있을 때
+    """
+    result, _ = analyze_audio_with_features(word, phoneme, audio_path)
+    return result
 
-    Returns:
-        AnalysisResultDto
+
+def analyze_audio_with_features(
+    word: str, phoneme: str, audio_path: Path
+) -> tuple[AnalysisResultDto, AudioFeaturesSnapshot]:
+    """음성 파일을 분석하고 채점 결과와 원시 feature 스냅샷을 함께 반환한다.
 
     Raises:
         KeyError: 해당 음소의 reference vector가 없을 때
@@ -82,11 +102,35 @@ def analyze_audio(word: str, phoneme: str, audio_path: Path) -> AnalysisResultDt
         phoneme=phoneme,
     )
 
-    return AnalysisResultDto.of(
-        word=word,
-        phoneme=phoneme,
-        score_result=score_result,
+    mfcc_distance = _compute_mfcc_distance(
+        user_mfcc=features.get("mfcc_mean"),
+        ref_mfcc=reference.get("mfcc_mean"),
     )
+    features_snapshot = AudioFeaturesSnapshot(
+        duration_ms=features.get("duration_ms"),
+        rms_mean=features.get("rms_mean"),
+        zcr_mean=features.get("zcr_mean"),
+        spectral_centroid_mean=features.get("spectral_centroid_mean"),
+        mfcc_distance=mfcc_distance,
+    )
+
+    result = AnalysisResultDto.of(word=word, phoneme=phoneme, score_result=score_result)
+    return result, features_snapshot
+
+
+def _compute_mfcc_distance(
+    user_mfcc: list[float] | None,
+    ref_mfcc: list[float] | None,
+) -> float | None:
+    """사용자 MFCC 벡터와 reference MFCC 평균 벡터 간의 L2 거리를 계산한다."""
+    if user_mfcc is None or ref_mfcc is None:
+        return None
+    try:
+        user_arr = np.array(user_mfcc, dtype=float)
+        ref_arr = np.array(ref_mfcc, dtype=float)
+        return float(np.linalg.norm(user_arr - ref_arr))
+    except Exception:
+        return None
 
 
 def _get_reference_vectors() -> dict:

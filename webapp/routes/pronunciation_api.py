@@ -9,7 +9,10 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import Response
 
 from pipeline.db import save_user_recording_result
-from webapp.services.pronunciation_facade import analyze_audio, load_word_list
+from webapp.services.pronunciation_facade import (
+    analyze_audio_with_features,
+    load_word_list,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
@@ -54,7 +57,9 @@ async def analyze_pronunciation(
     save_path = _save_record_audio(audio_bytes, word, suffix, test_label=normalized_label)
 
     try:
-        result = analyze_audio(word=word, phoneme=phoneme, audio_path=save_path)
+        result, features_snapshot = analyze_audio_with_features(
+            word=word, phoneme=phoneme, audio_path=save_path
+        )
 
         save_user_recording_result(
             word=word,
@@ -64,6 +69,11 @@ async def analyze_pronunciation(
             feedback=result.feedback,
             recording_path=str(save_path),
             test_label=normalized_label,
+            duration_ms=features_snapshot.duration_ms,
+            rms_mean=features_snapshot.rms_mean,
+            zcr_mean=features_snapshot.zcr_mean,
+            spectral_centroid_mean=features_snapshot.spectral_centroid_mean,
+            mfcc_distance=features_snapshot.mfcc_distance,
         )
 
         body = json.dumps(result.to_dict(), ensure_ascii=False)
@@ -96,7 +106,8 @@ async def analyze_pronunciation(
 # ── 헬퍼 ────────────────────────────────────────────────────────────────────
 
 def _is_test_labels_enabled() -> bool:
-    return os.getenv("ENABLE_TEST_LABELS", "true").lower() == "true"
+    value = os.getenv("ENABLE_TEST_LABELS", "true").strip().lower()
+    return value not in {"false", "0", "no", "off"}
 
 
 def normalize_test_label(value: str | None, *, enabled: bool) -> str | None:
@@ -133,20 +144,37 @@ def _save_record_audio(
 ) -> Path:
     """오디오 bytes를 라벨 기반 경로에 저장하고 경로를 반환한다.
 
-    ENABLE_TEST_LABELS=false일 때도 unlabeled/ 하위 폴더에 저장해
-    폴더 구조를 항상 일관되게 유지한다.
+    - unlabeled: {ts}_{safe_word}_unlabeled{suffix}  (타임스탬프로 고유성 보장)
+    - labeled  : {safe_word}{suffix}, 중복이면 {safe_word}_002{suffix} 식으로 번호 부여
     """
     label = test_label if test_label in ALLOWED_TEST_LABELS else "unlabeled"
     save_dir = _RECORD_SAVE_DIR / label
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_word = _safe_word_for_filename(word)
-    filename = f"{ts}_{safe_word}_{label}{suffix}"
+
+    if label == "unlabeled":
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{ts}_{safe_word}_unlabeled{suffix}"
+    else:
+        filename = _numbered_filename(save_dir, safe_word, suffix)
 
     save_path = save_dir / filename
     save_path.write_bytes(data)
     return save_path
+
+
+def _numbered_filename(save_dir: Path, safe_word: str, suffix: str) -> str:
+    """safe_word{suffix}가 이미 있으면 safe_word_002{suffix}, _003{suffix} … 순으로 번호를 붙인다."""
+    base = f"{safe_word}{suffix}"
+    if not (save_dir / base).exists():
+        return base
+    index = 2
+    while True:
+        candidate = f"{safe_word}_{index:03d}{suffix}"
+        if not (save_dir / candidate).exists():
+            return candidate
+        index += 1
 
 
 def _safe_suffix(filename: str | None) -> str:
