@@ -74,6 +74,7 @@ async def analyze_pronunciation(
             zcr_mean=features_snapshot.zcr_mean,
             spectral_centroid_mean=features_snapshot.spectral_centroid_mean,
             mfcc_distance=features_snapshot.mfcc_distance,
+            details=result.details,
         )
 
         body = json.dumps(result.to_dict(), ensure_ascii=False)
