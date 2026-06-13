@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import re
+from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Literal, TypedDict
 
 if TYPE_CHECKING:
@@ -24,6 +26,11 @@ _RMS_TOO_QUIET = 0.015
 _ZCR_HIGH_NOISE = 0.35
 _RMS_LOW_FOR_NOISE_CHECK = 0.020
 _ZCR_EXTREME = 0.50
+
+_SHORT_WORD_FUZZY_THRESHOLD = 0.65
+_LONG_WORD_FUZZY_THRESHOLD = 0.75
+_CONFIDENT_OTHER_WORD_THRESHOLD = 0.45
+_SHORT_WORD_MAX_LEN = 4
 
 _whisper_model: WhisperModel | None = None
 
@@ -52,22 +59,72 @@ def _load_whisper_model() -> WhisperModel:
     return _whisper_model
 
 
-def check_word_match(audio_path: str, target_word: str) -> bool:
-    """STT로 녹음을 transcribe해 target_word 포함 여부를 확인한다.
+def _normalize_text(text: str) -> str:
+    return re.sub(r"[^a-z\s]", " ", text.lower()).strip()
 
-    Args:
-        audio_path: 녹음 파일 경로
-        target_word: 확인할 대상 단어
 
-    Returns:
-        transcribed 텍스트에 target_word(소문자)가 있으면 True.
-        STT 오류 발생 시 True(fail open)를 반환한다.
+def _similarity(left: str, right: str) -> float:
+    return SequenceMatcher(None, left, right).ratio()
+
+
+def _get_fuzzy_threshold(target_word: str) -> float:
+    if len(target_word) <= _SHORT_WORD_MAX_LEN:
+        return _SHORT_WORD_FUZZY_THRESHOLD
+    return _LONG_WORD_FUZZY_THRESHOLD
+
+
+def _has_exact_token_match(target_word: str, transcript_tokens: list[str]) -> bool:
+    return target_word in transcript_tokens
+
+
+def _has_fuzzy_token_match(target_word: str, transcript_tokens: list[str]) -> bool:
+    if not transcript_tokens:
+        return False
+    threshold = _get_fuzzy_threshold(target_word)
+    best_similarity = max(_similarity(target_word, token) for token in transcript_tokens)
+    return best_similarity >= threshold
+
+
+def _is_confident_other_word(target_word: str, transcript_tokens: list[str]) -> bool:
+    """STT 결과가 확실히 다른 단어 하나일 때만 mismatch로 본다."""
+    if len(transcript_tokens) != 1:
+        return False
+    similarity = _similarity(target_word, transcript_tokens[0])
+    return similarity < _CONFIDENT_OTHER_WORD_THRESHOLD
+
+
+def check_word_match(audio_path: str, target_word: str) -> bool | None:
+    """STT로 목표 단어 일치 여부를 확인한다.
+
+    STT는 짧은 단어에서 불안정하므로 확실한 경우만 True/False를 반환한다.
+    애매하거나 비어 있는 결과는 None으로 두고 발음 채점을 계속 진행한다.
     """
+    normalized_target = _normalize_text(target_word).replace(" ", "")
+    if not normalized_target:
+        return None
+
     try:
         model = _load_whisper_model()
-        segments, _ = model.transcribe(audio_path, language="en", beam_size=1)
-        transcribed = " ".join(segment.text for segment in segments).lower().strip()
-        return target_word.lower().strip() in transcribed
+        segments, _ = model.transcribe(
+            audio_path,
+            language="en",
+            beam_size=1,
+            initial_prompt=target_word,
+        )
+        transcribed = " ".join(segment.text for segment in segments)
+        normalized_transcript = _normalize_text(transcribed)
+        if not normalized_transcript:
+            return None
+
+        transcript_tokens = normalized_transcript.split()
+        if _has_exact_token_match(normalized_target, transcript_tokens):
+            return True
+        if _has_fuzzy_token_match(normalized_target, transcript_tokens):
+            return True
+        if _is_confident_other_word(normalized_target, transcript_tokens):
+            return False
+
+        return None
     except Exception:
         log.warning(
             "STT word match 확인 실패 (fail open): audio_path=%s, target_word=%s",
@@ -75,7 +132,7 @@ def check_word_match(audio_path: str, target_word: str) -> bool:
             target_word,
             exc_info=True,
         )
-        return True
+        return None
 
 
 def _has_bad_duration(duration_ms: float, reference_duration_ms: float | None) -> list[str]:
@@ -151,7 +208,7 @@ def evaluate_recording_quality(
     word_match: bool | None = None
     if audio_path and target_word:
         word_match = check_word_match(audio_path, target_word)
-        if not word_match:
+        if word_match is False:
             issue_flags.append("word_mismatch")
 
     status: QualityStatus = "bad" if issue_flags else "ok"
