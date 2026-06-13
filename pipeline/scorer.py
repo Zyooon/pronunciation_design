@@ -245,7 +245,13 @@ def _build_phoneme_score_details(user_features: AudioFeatures, reference: Refere
     return {"score": round(float(mfcc_score), 1), "mfcc_score": round(float(mfcc_score), 1)}
 
 
-def score_pronunciation(user_features: AudioFeatures, reference: ReferenceVector, phoneme: str, ko_reference: ReferenceVector | None = None, liquid_alt_reference: ReferenceVector | None = None) -> ScoreResult:
+def score_pronunciation(
+        user_features: AudioFeatures, 
+        reference: ReferenceVector, 
+        phoneme: str, 
+        ko_reference: ReferenceVector | None = None, 
+        liquid_alt_reference: ReferenceVector | None = None
+        ) -> ScoreResult:
     phoneme_type = str(reference.get("phoneme_type", "unknown"))
     sub_scores = _build_phoneme_score_details(user_features, reference, phoneme_type, phoneme)
     base_score = float(sub_scores.pop("score"))

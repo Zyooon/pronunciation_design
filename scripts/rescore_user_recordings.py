@@ -99,10 +99,21 @@ def rescore_row(row: sqlite3.Row, en_vectors: dict, ko_vectors: dict, dry_run: b
         return "skip_no_reference"
 
     reference = en_vectors[phoneme]
+    liquid_alt_reference = None
+    if phoneme == "r":
+        liquid_alt_reference = en_vectors.get("l")
+    elif phoneme == "l":
+        liquid_alt_reference = en_vectors.get("r")
     ko_reference = ko_vectors.get(phoneme)
     waveform, sr = load_trimmed_audio(audio_path)
     features = extract_features(waveform, sr)
-    score_result = score_pronunciation(features, reference, phoneme, ko_reference=ko_reference)
+    score_result = score_pronunciation(
+        features,
+        reference,
+        phoneme,
+        ko_reference=ko_reference,
+        liquid_alt_reference=liquid_alt_reference,
+    )
     score = score_result["score"]
     details = score_result.get("details", {})
 

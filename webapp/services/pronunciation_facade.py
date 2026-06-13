@@ -98,6 +98,11 @@ def analyze_audio_with_features(
         )
 
     reference = reference_vectors[phoneme]
+    liquid_alt_reference = None
+    if phoneme == "r":
+        liquid_alt_reference = reference_vectors.get("l")
+    elif phoneme == "l":
+        liquid_alt_reference = reference_vectors.get("r")
     ko_reference = ko_reference_vectors.get(phoneme)
     waveform, sr = load_trimmed_audio(audio_path)
     features = extract_features(waveform, sr)
@@ -106,6 +111,7 @@ def analyze_audio_with_features(
         reference=reference,
         phoneme=phoneme,
         ko_reference=ko_reference,
+        liquid_alt_reference=liquid_alt_reference,
     )
 
     mfcc_distance = _compute_mfcc_distance(
