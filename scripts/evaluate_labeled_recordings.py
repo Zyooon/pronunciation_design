@@ -33,6 +33,8 @@ LABELS = ("good", "korean_like")
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".webm"}
 SCORE_THRESHOLD = 75.0
 KO_REFERENCE_PHONEMES = {"θ", "v", "æ", "f"}
+LIQUID_REFERENCE_PHONEMES = {"r", "l"}
+ALT_REFERENCE_PHONEMES = KO_REFERENCE_PHONEMES | LIQUID_REFERENCE_PHONEMES
 DETAIL_FIELDS = (
     "mfcc_score",
     "duration_score",
@@ -44,6 +46,7 @@ DETAIL_FIELDS = (
     "pronunciation_penalty",
     "korean_like_penalty",
     "liquid_alt_penalty",
+    "liquid_onset_penalty",
     "schwa_overstress_penalty",
     "total_penalty",
     "duration_ratio",
@@ -53,6 +56,12 @@ DETAIL_FIELDS = (
     "en_distance",
     "ko_distance",
     "relative_distance_score",
+    "liquid_target_distance",
+    "liquid_alt_distance",
+    "liquid_alt_relative_score",
+    "liquid_onset_en_distance",
+    "liquid_onset_ko_distance",
+    "liquid_onset_relative_score",
     "schwa_onset_rms",
     "schwa_total_rms",
     "schwa_ref_onset_rms",
@@ -107,6 +116,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--schwa-onset-rms-multiplier", type=float, default=scorer_module._SCHWA_ONSET_RMS_MULTIPLIER)
     parser.add_argument("--schwa-onset-to-total-multiplier", type=float, default=scorer_module._SCHWA_ONSET_TO_TOTAL_MULTIPLIER)
     parser.add_argument("--schwa-max-penalty", type=float, default=scorer_module._SCHWA_OVERSTRESS_MAX_PENALTY)
+    parser.add_argument("--liquid-onset-score-start", type=float, default=scorer_module._LIQUID_ONSET_SCORE_START)
+    parser.add_argument("--liquid-onset-score-strong", type=float, default=scorer_module._LIQUID_ONSET_SCORE_STRONG)
+    parser.add_argument("--liquid-onset-multiplier", type=float, default=scorer_module._LIQUID_ONSET_PENALTY_MULTIPLIER)
+    parser.add_argument("--liquid-onset-max-penalty", type=float, default=scorer_module._LIQUID_ONSET_PENALTY_MAX)
     return parser.parse_args()
 
 
@@ -122,6 +135,10 @@ def apply_score_parameters(args: argparse.Namespace) -> None:
     scorer_module._SCHWA_ONSET_RMS_MULTIPLIER = args.schwa_onset_rms_multiplier
     scorer_module._SCHWA_ONSET_TO_TOTAL_MULTIPLIER = args.schwa_onset_to_total_multiplier
     scorer_module._SCHWA_OVERSTRESS_MAX_PENALTY = args.schwa_max_penalty
+    scorer_module._LIQUID_ONSET_SCORE_START = args.liquid_onset_score_start
+    scorer_module._LIQUID_ONSET_SCORE_STRONG = args.liquid_onset_score_strong
+    scorer_module._LIQUID_ONSET_PENALTY_MULTIPLIER = args.liquid_onset_multiplier
+    scorer_module._LIQUID_ONSET_PENALTY_MAX = args.liquid_onset_max_penalty
 
 
 def safe_float(value: Any) -> float | None:
@@ -206,12 +223,19 @@ def _aggregate_float_feature(samples: list[dict[str, Any]], key: str) -> float |
     return round(float(mean(numeric_values)), 6)
 
 
-def _aggregate_mfcc(samples: list[dict[str, Any]]) -> tuple[list[float], list[float]]:
-    values = [sample["mfcc_mean"] for sample in samples if sample.get("mfcc_mean") is not None]
+def _aggregate_vector_feature(samples: list[dict[str, Any]], key: str) -> tuple[list[float], list[float]] | None:
+    values = [sample[key] for sample in samples if sample.get(key) is not None]
     if not values:
-        raise ValueError("MFCC feature가 없는 한국어식 reference sample입니다.")
+        return None
     arr = np.array(values, dtype=float)
     return np.mean(arr, axis=0).round(6).tolist(), np.std(arr, axis=0).round(6).tolist()
+
+
+def _aggregate_mfcc(samples: list[dict[str, Any]]) -> tuple[list[float], list[float]]:
+    aggregated = _aggregate_vector_feature(samples, "mfcc_mean")
+    if aggregated is None:
+        raise ValueError("MFCC feature가 없는 한국어식 reference sample입니다.")
+    return aggregated
 
 
 def _aggregate_ko_reference(samples: list[dict[str, Any]], phoneme_type: str) -> dict[str, Any]:
@@ -222,10 +246,17 @@ def _aggregate_ko_reference(samples: list[dict[str, Any]], phoneme_type: str) ->
         "phoneme_type": phoneme_type,
         "sample_count": len(samples),
     }
-    for key in ("duration_ms", "rms_mean", "zcr_mean", "spectral_centroid_mean"):
+    for key in ("duration_ms", "rms_mean", "zcr_mean", "spectral_centroid_mean", "onset_rms_mean", "onset_window_ms", "onset_spectral_centroid_mean"):
         value = _aggregate_float_feature(samples, key)
         if value is not None:
             vector[key] = value
+    for key in ("onset_mfcc_mean",):
+        aggregated = _aggregate_vector_feature(samples, key)
+        if aggregated is None:
+            continue
+        mean_values, std_values = aggregated
+        vector[key] = mean_values
+        vector[f"{key}_std"] = std_values
     return vector
 
 
@@ -241,6 +272,7 @@ def build_ko_reference_vectors_from_audio(
     ko_reference_audio_dir: Path,
     word_index: dict[str, list[TargetWord]],
     en_reference_vectors: dict[str, dict[str, Any]],
+    word_targets: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
     if not ko_reference_audio_dir.exists():
         return {}
@@ -255,11 +287,12 @@ def build_ko_reference_vectors_from_audio(
             target = find_target_by_filename(audio_path, word_index)
         except ValueError:
             continue
-        if target.phoneme not in KO_REFERENCE_PHONEMES:
+        if target.phoneme not in ALT_REFERENCE_PHONEMES:
             continue
         try:
             waveform, sample_rate = load_trimmed_audio(audio_path)
-            features = extract_features(waveform, sample_rate)
+            include_onset = should_extract_onset(target.word, target.phoneme, word_targets)
+            features = extract_features(waveform, sample_rate, include_onset=include_onset)
             grouped_samples[target.phoneme].append(features)
         except Exception:
             continue
@@ -278,16 +311,23 @@ def load_ko_reference_vectors(
     ko_reference_audio_dir: Path,
     word_index: dict[str, list[TargetWord]],
     en_reference_vectors: dict[str, dict[str, Any]],
+    word_targets: dict[str, Any],
     disabled: bool,
 ) -> tuple[dict[str, dict[str, Any]], str]:
     if disabled:
         return {}, "disabled"
+
+    built = build_ko_reference_vectors_from_audio(ko_reference_audio_dir, word_index, en_reference_vectors, word_targets)
     if ko_reference_path.exists():
         with ko_reference_path.open("r", encoding="utf-8") as f:
             loaded = json.load(f)
         if isinstance(loaded, dict):
-            return loaded, str(ko_reference_path)
-    built = build_ko_reference_vectors_from_audio(ko_reference_audio_dir, word_index, en_reference_vectors)
+            merged = dict(loaded)
+            for phoneme, vector in built.items():
+                if phoneme not in merged or phoneme in LIQUID_REFERENCE_PHONEMES:
+                    merged[phoneme] = vector
+            return merged, f"{ko_reference_path}+built_liquid_from_audio:{ko_reference_audio_dir}"
+
     return built, f"built_from_audio:{ko_reference_audio_dir}"
 
 
@@ -305,6 +345,7 @@ def score_audio_file(
     if reference is None:
         raise KeyError(f"reference vector가 없습니다: /{target.phoneme}/")
     ko_reference = ko_reference_vectors.get(target.phoneme)
+    liquid_alt_reference = ko_reference if target.phoneme in LIQUID_REFERENCE_PHONEMES else None
 
     waveform, sample_rate = load_trimmed_audio(audio_path)
     include_onset = should_extract_onset(target.word, target.phoneme, word_targets)
@@ -322,6 +363,7 @@ def score_audio_file(
         reference=reference,
         phoneme=target.phoneme,
         ko_reference=ko_reference,
+        liquid_alt_reference=liquid_alt_reference,
         recording_quality_result=quality_result,
     )
     details = result.get("details", {})
@@ -332,6 +374,7 @@ def score_audio_file(
         "word": target.word,
         "phoneme": target.phoneme,
         "has_ko_reference": ko_reference is not None,
+        "has_liquid_alt_reference": liquid_alt_reference is not None,
         "score": safe_float(result.get("score")),
         "recording_quality_status": result.get("recording_quality_status"),
         "issue_flags": json.dumps(result.get("issue_flags") or [], ensure_ascii=False),
@@ -345,6 +388,8 @@ def score_audio_file(
         "onset_spectral_centroid_mean": safe_float(features.get("onset_spectral_centroid_mean")),
         "korean_pattern_status": details.get("korean_pattern_status"),
         "korean_pattern_penalty_policy": details.get("korean_pattern_penalty_policy"),
+        "liquid_alt_status": details.get("liquid_alt_status"),
+        "liquid_onset_status": details.get("liquid_onset_status"),
         "schwa_overstress_status": details.get("schwa_overstress_status"),
     }
     for key in DETAIL_FIELDS:
@@ -422,6 +467,8 @@ def build_summary(results: list[dict[str, Any]], labels: list[str], threshold: f
             "avg_rms_score": describe(score_values(rows, "rms_score"))["avg"],
             "avg_zcr_score": describe(score_values(rows, "zcr_score"))["avg"],
             "avg_korean_like_penalty": describe(score_values(rows, "korean_like_penalty"))["avg"],
+            "avg_liquid_alt_penalty": describe(score_values(rows, "liquid_alt_penalty"))["avg"],
+            "avg_liquid_onset_penalty": describe(score_values(rows, "liquid_onset_penalty"))["avg"],
             "avg_relative_distance_score": describe(score_values(rows, "relative_distance_score"))["avg"],
             "avg_total_penalty": describe(score_values(rows, "total_penalty"))["avg"],
         }
@@ -451,7 +498,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def print_summary(summary: dict[str, Any], labels: list[str]) -> None:
     print("\nFolder score summary")
-    print("label           count  avg     median  >=75_rate  none_rate  ko_ref  ko_pen  rms_avg  zcr_avg")
+    print("label           count  avg     median  >=75_rate  none_rate  ko_ref  ko_pen  liq_pen  liq_on  rms_avg  zcr_avg")
     for label in labels:
         data = summary[label]
         score = data["score"]
@@ -463,6 +510,8 @@ def print_summary(summary: dict[str, Any], labels: list[str]) -> None:
             f"{data['score_none_rate'] if data['score_none_rate'] is not None else '-':>9} "
             f"{data['ko_reference_rate'] if data['ko_reference_rate'] is not None else '-':>7} "
             f"{data['avg_korean_like_penalty'] if data['avg_korean_like_penalty'] is not None else '-':>7} "
+            f"{data['avg_liquid_alt_penalty'] if data['avg_liquid_alt_penalty'] is not None else '-':>8} "
+            f"{data['avg_liquid_onset_penalty'] if data['avg_liquid_onset_penalty'] is not None else '-':>7} "
             f"{data['avg_rms_score'] if data['avg_rms_score'] is not None else '-':>8} "
             f"{data['avg_zcr_score'] if data['avg_zcr_score'] is not None else '-':>8}"
         )
@@ -478,14 +527,15 @@ def main() -> None:
     target_words = load_target_words()
     word_index = build_word_index(target_words)
     reference_vectors = load_reference_vectors()
+    word_targets = load_word_targets()
     ko_reference_vectors, ko_reference_source = load_ko_reference_vectors(
         args.ko_reference_path,
         args.ko_reference_audio_dir,
         word_index,
         reference_vectors,
+        word_targets,
         args.disable_ko_reference,
     )
-    word_targets = load_word_targets()
     audio_files = collect_audio_files(args.source_dir, args.labels)
 
     results: list[dict[str, Any]] = []
@@ -534,6 +584,15 @@ def main() -> None:
             "zcr_floor": args.zcr_floor,
             "zcr_tolerance": args.zcr_tolerance,
             "zcr_steepness": args.zcr_steepness,
+            "schwa_onset_rms_ratio_start": args.schwa_onset_rms_ratio_start,
+            "schwa_onset_to_total_ratio_start": args.schwa_onset_to_total_ratio_start,
+            "schwa_onset_rms_multiplier": args.schwa_onset_rms_multiplier,
+            "schwa_onset_to_total_multiplier": args.schwa_onset_to_total_multiplier,
+            "schwa_max_penalty": args.schwa_max_penalty,
+            "liquid_onset_score_start": args.liquid_onset_score_start,
+            "liquid_onset_score_strong": args.liquid_onset_score_strong,
+            "liquid_onset_multiplier": args.liquid_onset_multiplier,
+            "liquid_onset_max_penalty": args.liquid_onset_max_penalty,
         },
         "summary": summary,
         "audio_file_count": len(audio_files),
@@ -559,7 +618,8 @@ def main() -> None:
     print(f"summary : {summary_path}")
     print(f"details : {details_path}")
     print(f"failures: {failures_path}")
-    print(f"errors  : {errors_path}")
+    if errors:
+        print(f"errors  : {errors_path}")
 
 
 if __name__ == "__main__":
