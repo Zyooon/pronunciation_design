@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from pipeline.audio import load_trimmed_audio
 from pipeline.features import extract_features
+from pipeline.word_targets import WordTarget, load_word_targets
 
 
 DEFAULT_WORDS_PATH = PROJECT_ROOT / "data" / "words.txt"
@@ -77,6 +78,14 @@ def _aggregate_feature(samples: list[dict], key: str) -> tuple[list[float], list
     return np.mean(arr, axis=0).round(6).tolist(), np.std(arr, axis=0).round(6).tolist()
 
 
+def _collect_phonemes_needing_onset(word_targets: dict[str, WordTarget]) -> frozenset[str]:
+    return frozenset(
+        target.target_phoneme
+        for target in word_targets.values()
+        if target.position == "onset"
+    )
+
+
 def aggregate_reference_vectors(samples: list[dict]) -> dict:
     mfcc_values = np.array([sample["mfcc_mean"] for sample in samples], dtype=float)
     zcr_values = np.array([sample["zcr_mean"] for sample in samples], dtype=float)
@@ -106,6 +115,12 @@ def aggregate_reference_vectors(samples: list[dict]) -> dict:
         vector[key] = mean_values
         vector[f"{key}_std"] = std_values
 
+    onset_rms_values = [float(s["onset_rms_mean"]) for s in samples if "onset_rms_mean" in s]
+    if onset_rms_values:
+        onset_rms_arr = np.array(onset_rms_values, dtype=float)
+        vector["onset_rms_mean"] = round(float(np.mean(onset_rms_arr)), 6)
+        vector["onset_rms_std"] = round(float(np.std(onset_rms_arr)), 6)
+
     return vector
 
 
@@ -113,6 +128,9 @@ def build_reference_vectors(words_path: Path, reference_audio_dir: Path, output_
     entries = load_word_entries(words_path)
     if not include_all:
         entries = [entry for entry in entries if entry["phoneme"] in MVP_PHONEMES]
+
+    word_targets = load_word_targets()
+    onset_phonemes = _collect_phonemes_needing_onset(word_targets)
 
     grouped_samples: dict[str, list[dict]] = {}
     test_words_by_phoneme: dict[str, set[str]] = {}
@@ -132,10 +150,11 @@ def build_reference_vectors(words_path: Path, reference_audio_dir: Path, output_
         test_words_by_phoneme.setdefault(phoneme, set())
         korean_by_word[word] = korean_pronunciation
 
+        include_onset = phoneme in onset_phonemes
         for audio_path in audio_files:
             try:
                 y, sr = load_trimmed_audio(audio_path)
-                features = extract_features(y, sr)
+                features = extract_features(y, sr, include_onset=include_onset)
                 features["word"] = word
                 features["source_file"] = str(audio_path.resolve().relative_to(PROJECT_ROOT.resolve()))
                 grouped_samples[phoneme].append(features)

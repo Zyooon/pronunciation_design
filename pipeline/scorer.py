@@ -36,10 +36,12 @@ _KO_RELATIVE_PENALTY_STRONG = 52.0
 _KO_RELATIVE_PENALTY_MULTIPLIER = 0.8
 _KO_RELATIVE_PENALTY_MAX = 15.0
 
-_SCHWA_RMS_SAFE_FLOOR = 0.01 
-_SCHWA_ONSET_TOLERANCE = 0.35 
-_SCHWA_OVERSTRESS_MULTIPLIER = 25.0 
-_SCHWA_OVERSTRESS_MAX_PENALTY = 15.0
+_SCHWA_ONSET_RMS_FLOOR = 0.001
+_SCHWA_ONSET_RMS_RATIO_START = 1.20
+_SCHWA_ONSET_TO_TOTAL_RATIO_START = 1.05
+_SCHWA_ONSET_RMS_MULTIPLIER = 8.0
+_SCHWA_ONSET_TO_TOTAL_MULTIPLIER = 28.0
+_SCHWA_OVERSTRESS_MAX_PENALTY = 12.0
 
 _LIQUID_ALT_SCORE_START = 53.0
 _LIQUID_ALT_SCORE_STRONG = 46.0
@@ -199,31 +201,33 @@ def compute_schwa_overstress_metrics(
             "schwa_overstress_penalty": 0.0,
         }
 
-    # 1. Onset 피처 추출 (없으면 감점 스킵)
-    onset_rms = float(user_features.get("onset_rms_mean", 0.0))
-    overall_rms = float(user_features.get("rms_mean", 0.0))
+    user_onset_rms = float(user_features.get("onset_rms_mean", 0.0))
+    user_total_rms = float(user_features.get("rms_mean", 0.0))
     ref_onset_rms = float(reference.get("onset_rms_mean", 0.0))
-    ref_overall_rms = float(reference.get("rms_mean", 0.0))
 
-    if onset_rms == 0.0 or ref_onset_rms == 0.0:
-         return {"schwa_overstress_status": "missing_onset_features", "schwa_overstress_penalty": 0.0}
+    if user_onset_rms == 0.0 or ref_onset_rms == 0.0:
+        return {"schwa_overstress_status": "missing_onset_features", "schwa_overstress_penalty": 0.0}
 
-    # 2. 비율 계산: 전체 볼륨 대비 초반 Onset 볼륨이 얼마나 큰가? (분모 폭발 방지 0.01)
-    user_onset_ratio = onset_rms / max(overall_rms, _SCHWA_RMS_SAFE_FLOOR)
-    ref_onset_ratio = ref_onset_rms / max(ref_overall_rms, _SCHWA_RMS_SAFE_FLOOR)
+    onset_rms_ratio = (user_onset_rms + _SCHWA_ONSET_RMS_FLOOR) / (ref_onset_rms + _SCHWA_ONSET_RMS_FLOOR)
+    onset_to_total_ratio = (user_onset_rms + _SCHWA_ONSET_RMS_FLOOR) / (user_total_rms + _SCHWA_ONSET_RMS_FLOOR)
 
-    # 3. 감점 로직: 유저의 초반 강세 비율이 원어민 비율 + 허용치(Tolerance)를 넘었을 때 감점
-    # 예: _SCHWA_ONSET_TOLERANCE = 0.3
-    ratio_diff = max(0.0, user_onset_ratio - (ref_onset_ratio + _SCHWA_ONSET_TOLERANCE))
-    
-    penalty = float(np.clip(ratio_diff * _SCHWA_OVERSTRESS_MULTIPLIER, 0.0, _SCHWA_OVERSTRESS_MAX_PENALTY))
+    onset_rms_excess = max(0.0, float(np.log(onset_rms_ratio)) - float(np.log(_SCHWA_ONSET_RMS_RATIO_START)))
+    onset_to_total_excess = max(0.0, onset_to_total_ratio - _SCHWA_ONSET_TO_TOTAL_RATIO_START)
+
+    penalty = onset_rms_excess * _SCHWA_ONSET_RMS_MULTIPLIER + onset_to_total_excess * _SCHWA_ONSET_TO_TOTAL_MULTIPLIER
+    penalty = float(np.clip(penalty, 0.0, _SCHWA_OVERSTRESS_MAX_PENALTY))
 
     status = "overstressed" if penalty > 0.0 else "ok"
     return {
         "schwa_overstress_status": status,
-        "schwa_user_onset_ratio": round(user_onset_ratio, 3),
-        "schwa_ref_onset_ratio": round(ref_onset_ratio, 3),
         "schwa_overstress_penalty": round(penalty, 1),
+        "schwa_onset_rms": round(user_onset_rms, 6),
+        "schwa_total_rms": round(user_total_rms, 6),
+        "schwa_ref_onset_rms": round(ref_onset_rms, 6),
+        "schwa_onset_rms_ratio": round(onset_rms_ratio, 4),
+        "schwa_onset_to_total_rms_ratio": round(onset_to_total_ratio, 4),
+        "schwa_onset_rms_excess": round(onset_rms_excess, 4),
+        "schwa_onset_to_total_excess": round(onset_to_total_excess, 4),
     }
 
 

@@ -44,6 +44,7 @@ DETAIL_FIELDS = (
     "pronunciation_penalty",
     "korean_like_penalty",
     "liquid_alt_penalty",
+    "schwa_overstress_penalty",
     "total_penalty",
     "duration_ratio",
     "rms_mean",
@@ -52,6 +53,13 @@ DETAIL_FIELDS = (
     "en_distance",
     "ko_distance",
     "relative_distance_score",
+    "schwa_onset_rms",
+    "schwa_total_rms",
+    "schwa_ref_onset_rms",
+    "schwa_onset_rms_ratio",
+    "schwa_onset_to_total_rms_ratio",
+    "schwa_onset_rms_excess",
+    "schwa_onset_to_total_excess",
 )
 
 
@@ -94,6 +102,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--zcr-floor", type=float, default=scorer_module._ZCR_SCORE_FLOOR)
     parser.add_argument("--zcr-tolerance", type=float, default=scorer_module._ZCR_SCORE_TOLERANCE)
     parser.add_argument("--zcr-steepness", type=float, default=scorer_module._ZCR_SCORE_STEEPNESS)
+    parser.add_argument("--schwa-onset-rms-ratio-start", type=float, default=scorer_module._SCHWA_ONSET_RMS_RATIO_START)
+    parser.add_argument("--schwa-onset-to-total-ratio-start", type=float, default=scorer_module._SCHWA_ONSET_TO_TOTAL_RATIO_START)
+    parser.add_argument("--schwa-onset-rms-multiplier", type=float, default=scorer_module._SCHWA_ONSET_RMS_MULTIPLIER)
+    parser.add_argument("--schwa-onset-to-total-multiplier", type=float, default=scorer_module._SCHWA_ONSET_TO_TOTAL_MULTIPLIER)
+    parser.add_argument("--schwa-max-penalty", type=float, default=scorer_module._SCHWA_OVERSTRESS_MAX_PENALTY)
     return parser.parse_args()
 
 
@@ -104,6 +117,11 @@ def apply_score_parameters(args: argparse.Namespace) -> None:
     scorer_module._ZCR_SCORE_FLOOR = args.zcr_floor
     scorer_module._ZCR_SCORE_TOLERANCE = args.zcr_tolerance
     scorer_module._ZCR_SCORE_STEEPNESS = args.zcr_steepness
+    scorer_module._SCHWA_ONSET_RMS_RATIO_START = args.schwa_onset_rms_ratio_start
+    scorer_module._SCHWA_ONSET_TO_TOTAL_RATIO_START = args.schwa_onset_to_total_ratio_start
+    scorer_module._SCHWA_ONSET_RMS_MULTIPLIER = args.schwa_onset_rms_multiplier
+    scorer_module._SCHWA_ONSET_TO_TOTAL_MULTIPLIER = args.schwa_onset_to_total_multiplier
+    scorer_module._SCHWA_OVERSTRESS_MAX_PENALTY = args.schwa_max_penalty
 
 
 def safe_float(value: Any) -> float | None:
@@ -322,8 +340,12 @@ def score_audio_file(
         "rms_mean": safe_float(features.get("rms_mean")),
         "zcr_mean": safe_float(features.get("zcr_mean")),
         "spectral_centroid_mean": safe_float(features.get("spectral_centroid_mean")),
+        "onset_rms_mean": safe_float(features.get("onset_rms_mean")),
+        "onset_window_ms": safe_float(features.get("onset_window_ms")),
+        "onset_spectral_centroid_mean": safe_float(features.get("onset_spectral_centroid_mean")),
         "korean_pattern_status": details.get("korean_pattern_status"),
         "korean_pattern_penalty_policy": details.get("korean_pattern_penalty_policy"),
+        "schwa_overstress_status": details.get("schwa_overstress_status"),
     }
     for key in DETAIL_FIELDS:
         row[key] = safe_float(details.get(key))
