@@ -111,7 +111,7 @@
       ${!hasAnyMetric ? renderMissingMetricNotice() : ""}
     `;
 
-    renderReferenceComparisonChart("chart-en-reference-raw", rawMetrics.filter((m) => m.userValue != null || m.refValue != null));
+    renderReferenceComparisonCharts(rawMetrics.filter((m) => m.userValue != null || m.refValue != null));
     renderScoreChart("chart-en-reference-scores", scoreMetrics.filter((m) => m.value != null));
     renderScoreChart("chart-ko-pattern", koreanMetrics.filter((m) => m.value != null), "korean");
   }
@@ -121,7 +121,7 @@
       const userValue = numOrNull(row[userKey]);
       const refValue = numOrNull(reference?.[refKey]);
       const ratio = userValue != null && refValue != null && Math.abs(refValue) > 0 ? userValue / refValue : null;
-      return { userKey, refKey, label, unit, description, userValue, refValue, ratio };
+      return { userKey, refKey, label, unit, description, userValue, refValue, ratio, canvasId: `chart-raw-${userKey}` };
     });
   }
 
@@ -188,17 +188,16 @@
         <div class="word-compare-section-head">
           <div>
             <h3>영어 Reference 비교</h3>
-            <p>현재 녹음 row의 raw feature를 같은 음소의 ElevenLabs 영어 reference 평균과 나란히 비교합니다.</p>
+            <p>현재 녹음 row의 raw feature를 같은 음소의 ElevenLabs 영어 reference 평균과 나란히 비교합니다. 항목마다 스케일이 달라 2×2 개별 그래프로 분리했습니다.</p>
           </div>
           <span class="pill ${englishReference ? "pill-ok" : "pill-warn"}">${englishReference ? "reference found" : "reference missing"}</span>
         </div>
         ${!englishReference ? `<div class="no-data-msg" style="margin-bottom:14px;">/${escHtml(row.phoneme || "")}/에 해당하는 ElevenLabs reference 평균을 찾지 못했습니다.</div>` : ""}
+        <div class="chart-grid raw-reference-chart-grid">
+          ${rawMetrics.map(renderRawReferenceChartBox).join("")}
+        </div>
         <div class="word-compare-group-grid">
           ${rawMetrics.map(renderRawReferenceCard).join("")}
-        </div>
-        <div class="chart-box word-compare-chart-box">
-          <div class="chart-title">Recording row vs ElevenLabs average</div>
-          <div class="chart-canvas-wrap" style="height:320px;"><canvas id="chart-en-reference-raw"></canvas></div>
         </div>
         <div class="word-compare-section-head" style="margin-top:18px;">
           <div>
@@ -215,6 +214,15 @@
         </div>
         ${shouldShowOnset ? renderOnsetSection(onsetMetrics) : ""}
       </section>
+    `;
+  }
+
+  function renderRawReferenceChartBox(metric) {
+    return `
+      <div class="chart-box word-compare-chart-box">
+        <div class="chart-title">${escHtml(metric.label)} · ${escHtml(metric.unit)}</div>
+        <div class="chart-canvas-wrap" style="height:220px;"><canvas id="${escHtml(metric.canvasId)}"></canvas></div>
+      </div>
     `;
   }
 
@@ -306,23 +314,30 @@
     `;
   }
 
-  function renderReferenceComparisonChart(canvasId, metrics) {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas || !metrics.length || typeof Chart === "undefined") return;
+  function renderReferenceComparisonCharts(metrics) {
+    metrics.forEach((metric) => renderSingleReferenceChart(metric));
+  }
+
+  function renderSingleReferenceChart(metric) {
+    const canvas = document.getElementById(metric.canvasId);
+    if (!canvas || typeof Chart === "undefined") return;
     new Chart(canvas, {
       type: "bar",
       data: {
-        labels: metrics.map((m) => m.label),
-        datasets: [
-          { label: "Recording row", data: metrics.map((m) => m.userValue), backgroundColor: "rgba(59,130,246,0.72)", borderColor: "#3b82f6", borderWidth: 1 },
-          { label: "ElevenLabs avg", data: metrics.map((m) => m.refValue), backgroundColor: "rgba(16,185,129,0.62)", borderColor: "#10b981", borderWidth: 1 },
-        ],
+        labels: ["Recording row", "ElevenLabs avg"],
+        datasets: [{
+          label: metric.label,
+          data: [metric.userValue, metric.refValue],
+          backgroundColor: ["rgba(59,130,246,0.72)", "rgba(16,185,129,0.62)"],
+          borderColor: ["#3b82f6", "#10b981"],
+          borderWidth: 1,
+        }],
       },
       options: {
-        indexAxis: "y",
         responsive: true,
         maintainAspectRatio: false,
-        scales: { x: { beginAtZero: true } },
+        scales: { y: { beginAtZero: true } },
+        plugins: { legend: { display: false } },
       },
     });
   }
