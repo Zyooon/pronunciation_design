@@ -331,6 +331,9 @@
           backgroundColor: ["rgba(59,130,246,0.72)", "rgba(16,185,129,0.62)"],
           borderColor: ["#3b82f6", "#10b981"],
           borderWidth: 1,
+          barPercentage: 0.3,
+          categoryPercentage: 0.6,
+          maxBarThickness: 22,
         }],
       },
       options: {
