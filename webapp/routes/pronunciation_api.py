@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -54,13 +55,18 @@ async def analyze_pronunciation(
 
     suffix = _safe_suffix(audio_file.filename)
     normalized_label = normalize_test_label(test_label, enabled=_is_test_labels_enabled())
-    save_path = _save_record_audio(audio_bytes, word, suffix, test_label=normalized_label)
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_f:
+        tmp_f.write(audio_bytes)
+        tmp_path = Path(tmp_f.name)
 
     try:
         result, features_snapshot = analyze_audio_with_features(
-            word=word, phoneme=phoneme, audio_path=save_path
+            word=word, phoneme=phoneme, audio_path=tmp_path
         )
-
+        save_path = _save_record_audio(
+            audio_bytes, word, suffix, test_label=normalized_label, score=result.score
+        )
         save_user_recording_result(
             word=word,
             phoneme=phoneme,
@@ -102,6 +108,8 @@ async def analyze_pronunciation(
             500,
             "분석 중 예상치 못한 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
         )
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 # ── 헬퍼 ────────────────────────────────────────────────────────────────────
@@ -144,11 +152,12 @@ def _save_record_audio(
     word: str,
     suffix: str,
     test_label: str | None = None,
+    score: float | None = None,
 ) -> Path:
     """오디오 bytes를 라벨 기반 경로에 저장하고 경로를 반환한다.
 
     - unlabeled: {ts}_{safe_word}_unlabeled{suffix}  (타임스탬프로 고유성 보장)
-    - labeled  : {safe_word}{suffix}, 중복이면 {safe_word}_002{suffix} 식으로 번호 부여
+    - labeled  : {safe_word}_{score}{suffix}, 중복이면 {safe_word}_{score}_002{suffix} 식으로 번호 부여
     """
     label = test_label if test_label in ALLOWED_TEST_LABELS else "unlabeled"
     save_dir = _RECORD_SAVE_DIR / label
@@ -160,21 +169,22 @@ def _save_record_audio(
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{ts}_{safe_word}_unlabeled{suffix}"
     else:
-        filename = _numbered_filename(save_dir, safe_word, suffix)
+        score_int = round(score) if score is not None else 0
+        filename = _scored_filename(save_dir, safe_word, score_int, suffix)
 
     save_path = save_dir / filename
     save_path.write_bytes(data)
     return save_path
 
 
-def _numbered_filename(save_dir: Path, safe_word: str, suffix: str) -> str:
-    """safe_word{suffix}가 이미 있으면 safe_word_002{suffix}, _003{suffix} … 순으로 번호를 붙인다."""
-    base = f"{safe_word}{suffix}"
+def _scored_filename(save_dir: Path, safe_word: str, score: int, suffix: str) -> str:
+    """{safe_word}_{score}{suffix} 형태로 고유한 파일명을 반환한다."""
+    base = f"{safe_word}_{score}{suffix}"
     if not (save_dir / base).exists():
         return base
     index = 2
     while True:
-        candidate = f"{safe_word}_{index:03d}{suffix}"
+        candidate = f"{safe_word}_{score}_{index:03d}{suffix}"
         if not (save_dir / candidate).exists():
             return candidate
         index += 1
