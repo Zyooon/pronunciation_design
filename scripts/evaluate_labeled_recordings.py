@@ -265,7 +265,7 @@ def _is_inside_record_dir(path: Path, ko_reference_audio_dir: Path) -> bool:
         relative_parts = path.relative_to(ko_reference_audio_dir).parts
     except ValueError:
         return False
-    return bool(relative_parts) and relative_parts[0] == "record"
+    return bool(relative_parts) and relative_parts[0].startswith("record")
 
 
 def build_ko_reference_vectors_from_audio(
