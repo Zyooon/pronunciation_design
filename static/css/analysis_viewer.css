@@ -391,6 +391,17 @@ body {
 .pager-status { color: #6b7c8f; font-size: 12px; font-weight: 700; padding: 0 4px; }
 .label-review-actions { display: flex; flex-wrap: wrap; gap: 6px; min-width: 180px; }
 .label-review-actions .secondary-btn { padding: 6px 8px; font-size: 12px; }
+.word-compare-link {
+  border: 1px solid #d8e9f7;
+  border-radius: 7px;
+  background: #fff;
+  color: #1677c7;
+  cursor: pointer;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+.word-compare-link:hover { background: #f0f7ff; border-color: #38a7ff; }
 .label-review-audio { width: 220px; max-width: 100%; }
 .label-review-path {
   font-size: 11px;
