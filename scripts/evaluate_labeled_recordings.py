@@ -28,7 +28,7 @@ from pipeline.word_targets import attach_word_target_features, load_word_targets
 SOURCE_DIR = PROJECT_ROOT / "data" / "reference_ko" / "record"
 KO_REFERENCE_AUDIO_DIR = PROJECT_ROOT / "data" / "reference_ko"
 KO_REFERENCE_PATH = PROJECT_ROOT / "data" / "reference_ko_vectors.json"
-REPORT_DIR = PROJECT_ROOT / "reports"
+REPORT_DIR = PROJECT_ROOT / "data" / "reports"
 LABELS = ("good", "korean_like", "wrong_or_noisy")
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".webm"}
 SCORE_THRESHOLD = 75.0
