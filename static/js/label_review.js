@@ -1,23 +1,42 @@
+const LABEL_REVIEW_PAGE_SIZE = 50;
+let _labelReviewPage = 1;
+
+// Label Review 탭 전용 스크립트
+// - 한 번에 50개씩 서버에서 조회
+// - 날짜는 초 단위까지만 표시
+// - 피드백은 표시하지 않고 검수에 필요한 핵심 정보만 표시
+// - 좁은 화면에서는 카드형으로 읽히도록 data-label 속성을 넣는다.
 document.addEventListener("DOMContentLoaded", () => {
   const filter = document.getElementById("label-review-filter");
   const refresh = document.getElementById("label-review-refresh");
 
   if (!filter || !refresh) return;
 
-  filter.addEventListener("change", () => loadLabelReviewRows());
+  filter.addEventListener("change", () => {
+    _labelReviewPage = 1;
+    loadLabelReviewRows();
+  });
   refresh.addEventListener("click", () => loadLabelReviewRows());
   loadLabelReviewRows();
 });
 
-async function loadLabelReviewRows() {
+async function loadLabelReviewRows(page = _labelReviewPage) {
   const wrap = document.getElementById("label-review-wrap");
   const filter = document.getElementById("label-review-filter");
   if (!wrap || !filter) return;
 
+  _labelReviewPage = Math.max(1, page);
   wrap.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
 
   try {
-    const data = await labelReviewFetchJson(`/api/label-review-results?label=${encodeURIComponent(filter.value)}`);
+    const params = new URLSearchParams({
+      label: filter.value,
+      page: String(_labelReviewPage),
+      limit: String(LABEL_REVIEW_PAGE_SIZE),
+    });
+    const data = await labelReviewFetchJson(`/api/label-review-results?${params.toString()}`);
+    _labelReviewPage = data.page || _labelReviewPage;
+
     if (!data.exists) {
       wrap.innerHTML = `<div class="no-data-msg">data/pronunciation.db 파일이 없습니다.</div>`;
       return;
@@ -27,22 +46,31 @@ async function loadLabelReviewRows() {
       return;
     }
     if (!data.rows || !data.rows.length) {
-      wrap.innerHTML = `<div class="no-data-msg">검수할 녹음이 없습니다.</div>`;
+      wrap.innerHTML = `
+        ${renderLabelReviewPager(data)}
+        <div class="no-data-msg">검수할 녹음이 없습니다.</div>
+      `;
+      bindLabelReviewPager(wrap, data);
       return;
     }
 
+    const start = (data.page - 1) * data.page_size + 1;
+    const end = start + data.rows.length - 1;
+
     wrap.innerHTML = `
-      <div class="meta-box" style="margin-bottom:12px;">
+      <div class="meta-box label-review-meta">
         <strong>전체:</strong> ${data.row_count}개
-        &nbsp;·&nbsp; <strong>표시:</strong> ${data.rows.length}개
+        &nbsp;·&nbsp; <strong>표시:</strong> ${start}-${end}개
+        &nbsp;·&nbsp; <strong>페이지:</strong> ${data.page}/${data.total_pages || 1}
         &nbsp;·&nbsp; <strong>필터:</strong> ${labelReviewEsc(filter.value || "전체")}
       </div>
-      <div class="table-wrap">
-        <table class="data-table" id="label-review-table">
+      ${renderLabelReviewPager(data)}
+      <div class="table-wrap label-review-table-wrap">
+        <table class="data-table label-review-table" id="label-review-table">
           <thead>
             <tr>
               <th>ID</th><th>날짜</th><th>단어</th><th>발음</th><th>현재 라벨</th>
-              <th>점수</th><th>품질/피드백</th><th>오디오</th><th>라벨 지정</th>
+              <th>점수</th><th>Penalty</th><th>오디오</th><th>라벨 지정</th>
             </tr>
           </thead>
           <tbody>
@@ -50,11 +78,13 @@ async function loadLabelReviewRows() {
           </tbody>
         </table>
       </div>
+      ${renderLabelReviewPager(data)}
     `;
 
     wrap.querySelectorAll("button[data-label]").forEach((btn) => {
       btn.addEventListener("click", () => updateReviewLabel(btn));
     });
+    bindLabelReviewPager(wrap, data);
   } catch (err) {
     wrap.innerHTML = `<div class="no-data-msg">${labelReviewEsc(err.message)}</div>`;
   }
@@ -63,28 +93,48 @@ async function loadLabelReviewRows() {
 function renderLabelReviewRow(row) {
   const label = row.test_label || "unlabeled";
   const audioHtml = row.recording_path
-    ? `<audio controls preload="none" src="/api/recording/${row.id}" style="width:220px;max-width:100%;"></audio>
-       <div style="font-size:11px;color:#6b7c8f;max-width:220px;word-break:break-all;">${labelReviewEsc(row.recording_path)}</div>`
+    ? `<audio class="label-review-audio" controls preload="none" src="/api/recording/${row.id}"></audio>
+       <div class="label-review-path">${labelReviewEsc(row.recording_path)}</div>`
     : `<span class="pill pill-warn">파일 없음</span>`;
-
-  const feedbackParts = [];
-  if (row.grade) feedbackParts.push(`grade: ${row.grade}`);
-  if (row.feedback) feedbackParts.push(row.feedback);
-  if (row.total_penalty != null) feedbackParts.push(`penalty: ${row.total_penalty}`);
 
   return `
     <tr data-recording-id="${row.id}">
-      <td class="num-cell">${row.id}</td>
-      <td>${labelReviewEsc(row.created_at || "")}</td>
-      <td><strong>${labelReviewEsc(row.word || "")}</strong></td>
-      <td class="phoneme-cell">/${labelReviewEsc(row.phoneme || "")}/</td>
-      <td class="label-cell">${renderLabelPill(label)}</td>
-      <td class="num-cell">${row.score ?? "—"}</td>
-      <td style="min-width:180px;">${labelReviewEsc(feedbackParts.join(" · ") || "—")}</td>
-      <td>${audioHtml}</td>
-      <td>${renderLabelButtons(row.id)}</td>
+      <td class="num-cell" data-label="ID">${row.id}</td>
+      <td data-label="날짜">${labelReviewEsc(formatLabelReviewDate(row.created_at))}</td>
+      <td data-label="단어"><strong>${labelReviewEsc(row.word || "")}</strong></td>
+      <td class="phoneme-cell" data-label="발음">/${labelReviewEsc(row.phoneme || "")}/</td>
+      <td class="label-cell" data-label="현재 라벨">${renderLabelPill(label)}</td>
+      <td class="num-cell" data-label="점수">${row.score ?? "—"}</td>
+      <td class="num-cell" data-label="Penalty">${row.total_penalty ?? "—"}</td>
+      <td data-label="오디오">${audioHtml}</td>
+      <td data-label="라벨 지정">${renderLabelButtons(row.id)}</td>
     </tr>
   `;
+}
+
+function renderLabelReviewPager(data) {
+  const totalPages = data.total_pages || 0;
+  if (totalPages <= 1) return "";
+  const page = data.page || 1;
+  return `
+    <div class="label-review-pager">
+      <button type="button" class="secondary-btn" data-page="1" ${page <= 1 ? "disabled" : ""}>처음</button>
+      <button type="button" class="secondary-btn" data-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>이전</button>
+      <span class="pager-status">${page} / ${totalPages}</span>
+      <button type="button" class="secondary-btn" data-page="${page + 1}" ${page >= totalPages ? "disabled" : ""}>다음</button>
+      <button type="button" class="secondary-btn" data-page="${totalPages}" ${page >= totalPages ? "disabled" : ""}>마지막</button>
+    </div>
+  `;
+}
+
+function bindLabelReviewPager(wrap, data) {
+  const totalPages = data.total_pages || 0;
+  wrap.querySelectorAll(".label-review-pager button[data-page]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const nextPage = Math.min(Math.max(parseInt(btn.dataset.page, 10), 1), totalPages || 1);
+      loadLabelReviewRows(nextPage);
+    });
+  });
 }
 
 function renderLabelButtons(id) {
@@ -95,8 +145,8 @@ function renderLabelButtons(id) {
     ["exclude", "exclude"],
     ["unlabeled", "clear"],
   ];
-  return `<div style="display:flex;flex-wrap:wrap;gap:6px;min-width:180px;">
-    ${labels.map(([value, text]) => `<button type="button" class="secondary-btn" data-id="${id}" data-label="${value}" style="padding:6px 8px;font-size:12px;">${text}</button>`).join("")}
+  return `<div class="label-review-actions">
+    ${labels.map(([value, text]) => `<button type="button" class="secondary-btn" data-id="${id}" data-label="${value}">${text}</button>`).join("")}
   </div>`;
 }
 
@@ -144,6 +194,14 @@ async function labelReviewFetchJson(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url} — HTTP ${res.status}`);
   return res.json();
+}
+
+function formatLabelReviewDate(value) {
+  if (!value) return "";
+  const raw = String(value);
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+  if (match) return `${match[1]} ${match[2]}`;
+  return raw.length > 19 ? raw.slice(0, 19).replace("T", " ") : raw.replace("T", " ");
 }
 
 function labelReviewEsc(value) {
