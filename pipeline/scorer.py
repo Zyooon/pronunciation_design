@@ -21,6 +21,13 @@ _DURATION_VERY_LOW_THRESHOLD = 35.0
 _CENTROID_LOW_THRESHOLD = 45.0
 _ZCR_LOW_THRESHOLD = 45.0
 
+_RMS_SCORE_FLOOR = 0.01
+_RMS_SCORE_TOLERANCE = 1.2
+_RMS_SCORE_STEEPNESS = 3.0
+_ZCR_SCORE_FLOOR = 0.05
+_ZCR_SCORE_TOLERANCE = 0.45
+_ZCR_SCORE_STEEPNESS = 4.0
+
 _KO_RELATIVE_PENALTY_START = 55.0
 _KO_RELATIVE_PENALTY_STRONG = 48.0
 _KO_RELATIVE_PENALTY_MULTIPLIER = 0.8
@@ -67,6 +74,29 @@ def z_score_distance_score(
 def ratio_feature_score(user_value: float, ref_value: float) -> float:
     diff_ratio = abs(user_value - ref_value) / (abs(ref_value) + EPSILON)
     return sigmoid_score(diff_ratio)
+
+
+def rms_feature_score(user_value: float, ref_value: float) -> float:
+    """RMS는 녹음 볼륨 차이에 민감하므로 floor가 있는 log-ratio로 완화한다."""
+    adjusted_user = max(float(user_value), 0.0) + _RMS_SCORE_FLOOR
+    adjusted_ref = max(float(ref_value), 0.0) + _RMS_SCORE_FLOOR
+    log_diff = abs(np.log(adjusted_user / adjusted_ref))
+    return sigmoid_score(
+        float(log_diff),
+        steepness=_RMS_SCORE_STEEPNESS,
+        tolerance=_RMS_SCORE_TOLERANCE,
+    )
+
+
+def zcr_feature_score(user_value: float, ref_value: float) -> float:
+    """ZCR은 reference 값이 작을 때 과도하게 흔들리지 않도록 기준 floor를 둔다."""
+    baseline = max(abs(float(ref_value)), _ZCR_SCORE_FLOOR)
+    diff_ratio = abs(float(user_value) - float(ref_value)) / (baseline + EPSILON)
+    return sigmoid_score(
+        float(diff_ratio),
+        steepness=_ZCR_SCORE_STEEPNESS,
+        tolerance=_ZCR_SCORE_TOLERANCE,
+    )
 
 
 def _mfcc_distance(user_features: AudioFeatures, reference: ReferenceVector | None) -> float | None:
@@ -174,7 +204,7 @@ def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dic
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
-    rms_score = ratio_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
+    rms_score = rms_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
     final_score = mfcc_score * 0.70 + duration_score * 0.15 + centroid_score * 0.10 + rms_score * 0.05
 
     return _round_sub_scores(
@@ -190,7 +220,7 @@ def score_duration_focused_vowel(user_features: AudioFeatures, reference: Refere
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
-    rms_score = ratio_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
+    rms_score = rms_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
     final_score = mfcc_score * 0.50 + duration_score * 0.35 + centroid_score * 0.10 + rms_score * 0.05
 
     return _round_sub_scores(
@@ -204,7 +234,7 @@ def score_duration_focused_vowel(user_features: AudioFeatures, reference: Refere
 
 def score_consonant(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
-    zcr_score = ratio_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
+    zcr_score = zcr_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     final_score = mfcc_score * 0.55 + zcr_score * 0.35 + centroid_score * 0.10
 
@@ -220,7 +250,7 @@ def score_liquid(user_features: AudioFeatures, reference: ReferenceVector) -> di
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
-    zcr_score = ratio_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
+    zcr_score = zcr_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
     final_score = mfcc_score * 0.70 + duration_score * 0.15 + centroid_score * 0.10 + zcr_score * 0.05
 
     return _round_sub_scores(
