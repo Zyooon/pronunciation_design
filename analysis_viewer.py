@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -28,6 +28,8 @@ DB_PATH                 = DATA_DIR / "pronunciation.db"
 
 USER_RECORDINGS_TABLE = "user_recordings"
 USER_RECORDINGS_LIMIT = 200
+LABEL_REVIEW_LIMIT = 300
+ALLOWED_REVIEW_LABELS = {"good", "korean_like", "wrong_or_noisy", "unlabeled", "exclude", ""}
 
 # 테이블 표시 컬럼 (존재하는 것만 사용)
 _TABLE_DISPLAY_COLS = [
@@ -129,6 +131,44 @@ async def get_user_results(latest_only: bool = True) -> Response:
     """user_recordings 테이블의 최근 결과를 JSON으로 반환한다."""
     payload = load_user_results_from_db(DB_PATH, limit=USER_RECORDINGS_LIMIT, latest_only=latest_only)
     return _json_response(payload)
+
+
+@app.get("/api/label-review-results")
+async def get_label_review_results(label: str = "", limit: int = LABEL_REVIEW_LIMIT) -> Response:
+    """라벨 검수 탭에서 사용할 녹음 목록을 반환한다."""
+    payload = load_label_review_results(DB_PATH, label=label, limit=limit)
+    return _json_response(payload)
+
+
+@app.get("/api/recording/{recording_id}")
+async def get_recording_audio(recording_id: int) -> FileResponse:
+    """user_recordings.recording_path의 오디오 파일을 재생용으로 반환한다."""
+    recording_path = get_recording_path_by_id(DB_PATH, recording_id)
+    if recording_path is None:
+        raise HTTPException(status_code=404, detail="recording row가 없습니다.")
+
+    file_path = resolve_recording_path(recording_path)
+    if file_path is None or not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="recording 파일을 찾을 수 없습니다.")
+
+    return FileResponse(file_path, media_type=guess_audio_media_type(file_path), filename=file_path.name)
+
+
+@app.post("/api/user-label/{recording_id}")
+async def update_user_label(recording_id: int, request: Request) -> Response:
+    """user_recordings.test_label을 검수 라벨로 업데이트한다."""
+    body = await request.json()
+    raw_label = body.get("test_label")
+    label = "" if raw_label is None else str(raw_label).strip()
+    if label not in ALLOWED_REVIEW_LABELS:
+        raise HTTPException(status_code=400, detail="허용되지 않은 라벨입니다.")
+
+    stored_label = None if label in {"", "unlabeled"} else label
+    updated = update_recording_label(DB_PATH, recording_id, stored_label)
+    if not updated:
+        raise HTTPException(status_code=404, detail="업데이트할 recording row가 없습니다.")
+
+    return _json_response({"ok": True, "id": recording_id, "test_label": stored_label})
 
 
 # ── 파일 로딩 ────────────────────────────────────────────────────────────────
@@ -326,6 +366,113 @@ def load_user_results_from_db(
     finally:
         if conn:
             conn.close()
+
+
+def load_label_review_results(db_path: Path, label: str = "", limit: int = LABEL_REVIEW_LIMIT) -> dict[str, Any]:
+    """라벨 검수용 user_recordings 목록을 조회한다."""
+    result: dict[str, Any] = {
+        "exists": db_path.exists(),
+        "rows": [],
+        "row_count": 0,
+        "error": None,
+        "label": label,
+    }
+    if not db_path.exists():
+        return result
+
+    label = (label or "").strip()
+    where = ""
+    params: list[Any] = []
+    if label == "unlabeled":
+        where = "WHERE test_label IS NULL OR test_label = ''"
+    elif label:
+        where = "WHERE test_label = ?"
+        params.append(label)
+
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if USER_RECORDINGS_TABLE not in tables:
+                result["error"] = f"{USER_RECORDINGS_TABLE} 테이블이 없습니다."
+                return result
+            count = conn.execute(f"SELECT COUNT(*) FROM {USER_RECORDINGS_TABLE} {where}", params).fetchone()[0]
+            rows = [
+                dict(row)
+                for row in conn.execute(
+                    f"""
+                    SELECT id, created_at, word, phoneme, test_label, score, grade, feedback,
+                           recording_path, duration_ms, rms_mean, zcr_mean,
+                           spectral_centroid_mean, mfcc_distance, total_penalty
+                    FROM {USER_RECORDINGS_TABLE}
+                    {where}
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    [*params, max(1, min(limit, 1000))],
+                )
+            ]
+            result.update({"rows": rows, "row_count": count})
+            return result
+    except sqlite3.Error as e:
+        result["error"] = str(e)
+        return result
+
+
+def get_recording_path_by_id(db_path: Path, recording_id: int) -> str | None:
+    if not db_path.exists():
+        return None
+    with sqlite3.connect(str(db_path)) as conn:
+        row = conn.execute(
+            f"SELECT recording_path FROM {USER_RECORDINGS_TABLE} WHERE id = ?",
+            (recording_id,),
+        ).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def update_recording_label(db_path: Path, recording_id: int, label: str | None) -> bool:
+    if not db_path.exists():
+        return False
+    with sqlite3.connect(str(db_path)) as conn:
+        cur = conn.execute(
+            f"UPDATE {USER_RECORDINGS_TABLE} SET test_label = ? WHERE id = ?",
+            (label, recording_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def resolve_recording_path(recording_path: str) -> Path | None:
+    raw_path = Path(recording_path)
+    candidates = [raw_path]
+    if not raw_path.is_absolute():
+        candidates.extend([
+            PROJECT_ROOT / raw_path,
+            DATA_DIR / raw_path,
+            PROJECT_ROOT / "recordings" / raw_path,
+            DATA_DIR / "recordings" / raw_path,
+        ])
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved.exists() and resolved.is_file():
+            return resolved
+    return None
+
+
+def guess_audio_media_type(file_path: Path) -> str:
+    suffix = file_path.suffix.lower()
+    if suffix == ".mp3":
+        return "audio/mpeg"
+    if suffix == ".webm":
+        return "audio/webm"
+    if suffix == ".ogg":
+        return "audio/ogg"
+    if suffix in {".m4a", ".mp4"}:
+        return "audio/mp4"
+    return "audio/wav"
 
 
 def _query_group_avg(
