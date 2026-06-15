@@ -24,9 +24,11 @@ _ZCR_LOW_THRESHOLD = 45.0
 _RMS_SCORE_FLOOR = 0.01
 _RMS_SCORE_TOLERANCE = 1.2
 _RMS_SCORE_STEEPNESS = 3.0
-_ZCR_SCORE_FLOOR = 0.05
-_ZCR_SCORE_TOLERANCE = 0.45
+
+_ZCR_SCORE_FLOOR = 0.08
+_ZCR_SCORE_TOLERANCE = 0.55
 _ZCR_SCORE_STEEPNESS = 4.0
+_ZCR_OVERSHOOT_PENALTY_SCALE = 0.3
 
 _KO_RELATIVE_PENALTY_START = 55.0
 _KO_RELATIVE_PENALTY_STRONG = 48.0
@@ -89,9 +91,15 @@ def rms_feature_score(user_value: float, ref_value: float) -> float:
 
 
 def zcr_feature_score(user_value: float, ref_value: float) -> float:
-    """ZCR은 reference 값이 작을 때 과도하게 흔들리지 않도록 기준 floor를 둔다."""
-    baseline = max(abs(float(ref_value)), _ZCR_SCORE_FLOOR)
-    diff_ratio = abs(float(user_value) - float(ref_value)) / (baseline + EPSILON)
+    user_value = float(user_value)
+    ref_value = float(ref_value)
+    baseline = max(abs(ref_value), _ZCR_SCORE_FLOOR)
+
+    if user_value >= ref_value:
+        diff_ratio = ((user_value - ref_value) / (baseline + EPSILON)) * _ZCR_OVERSHOOT_PENALTY_SCALE
+    else:
+        diff_ratio = (ref_value - user_value) / (baseline + EPSILON)
+
     return sigmoid_score(
         float(diff_ratio),
         steepness=_ZCR_SCORE_STEEPNESS,
