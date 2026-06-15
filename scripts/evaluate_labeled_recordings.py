@@ -11,6 +11,8 @@ from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
+import numpy as np
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -24,10 +26,13 @@ import pipeline.scorer as scorer_module
 from pipeline.word_targets import attach_word_target_features, load_word_targets, should_extract_onset
 
 SOURCE_DIR = PROJECT_ROOT / "data" / "reference_ko" / "record"
+KO_REFERENCE_AUDIO_DIR = PROJECT_ROOT / "data" / "reference_ko"
+KO_REFERENCE_PATH = PROJECT_ROOT / "data" / "reference_ko_vectors.json"
 REPORT_DIR = PROJECT_ROOT / "reports"
 LABELS = ("good", "korean_like", "wrong_or_noisy")
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".webm"}
 SCORE_THRESHOLD = 75.0
+KO_REFERENCE_PHONEMES = {"θ", "v", "æ", "f"}
 DETAIL_FIELDS = (
     "mfcc_score",
     "duration_score",
@@ -44,6 +49,9 @@ DETAIL_FIELDS = (
     "rms_mean",
     "zcr_mean",
     "spectral_centroid_mean",
+    "en_distance",
+    "ko_distance",
+    "relative_distance_score",
 )
 
 
@@ -58,6 +66,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--report-dir", type=Path, default=REPORT_DIR)
     parser.add_argument("--labels", nargs="+", default=list(LABELS), choices=LABELS)
     parser.add_argument("--score-threshold", type=float, default=SCORE_THRESHOLD)
+    parser.add_argument(
+        "--ko-reference-path",
+        type=Path,
+        default=KO_REFERENCE_PATH,
+        help="한국어식 reference vector JSON 경로입니다. 없으면 --ko-reference-audio-dir에서 즉석 생성합니다.",
+    )
+    parser.add_argument(
+        "--ko-reference-audio-dir",
+        type=Path,
+        default=KO_REFERENCE_AUDIO_DIR,
+        help="한국어식 reference 음성 폴더입니다. record 하위 테스트셋은 reference 생성에서 제외합니다.",
+    )
+    parser.add_argument(
+        "--disable-ko-reference",
+        action="store_true",
+        help="한국어식 reference penalty를 끄고 RMS/ZCR 기본 점수만 평가합니다.",
+    )
     parser.add_argument(
         "--check-word-match",
         action="store_true",
@@ -155,18 +180,113 @@ def find_target_by_filename(path: Path, word_index: dict[str, list[TargetWord]])
     raise ValueError(f"파일명 target이 모호합니다: {path} -> {candidate_text}")
 
 
+def _aggregate_float_feature(samples: list[dict[str, Any]], key: str) -> float | None:
+    values = [safe_float(sample.get(key)) for sample in samples]
+    numeric_values = [value for value in values if value is not None]
+    if not numeric_values:
+        return None
+    return round(float(mean(numeric_values)), 6)
+
+
+def _aggregate_mfcc(samples: list[dict[str, Any]]) -> tuple[list[float], list[float]]:
+    values = [sample["mfcc_mean"] for sample in samples if sample.get("mfcc_mean") is not None]
+    if not values:
+        raise ValueError("MFCC feature가 없는 한국어식 reference sample입니다.")
+    arr = np.array(values, dtype=float)
+    return np.mean(arr, axis=0).round(6).tolist(), np.std(arr, axis=0).round(6).tolist()
+
+
+def _aggregate_ko_reference(samples: list[dict[str, Any]], phoneme_type: str) -> dict[str, Any]:
+    mfcc_mean, mfcc_std = _aggregate_mfcc(samples)
+    vector: dict[str, Any] = {
+        "mfcc_mean": mfcc_mean,
+        "mfcc_std": mfcc_std,
+        "phoneme_type": phoneme_type,
+        "sample_count": len(samples),
+    }
+    for key in ("duration_ms", "rms_mean", "zcr_mean", "spectral_centroid_mean"):
+        value = _aggregate_float_feature(samples, key)
+        if value is not None:
+            vector[key] = value
+    return vector
+
+
+def _is_inside_record_dir(path: Path, ko_reference_audio_dir: Path) -> bool:
+    try:
+        relative_parts = path.relative_to(ko_reference_audio_dir).parts
+    except ValueError:
+        return False
+    return bool(relative_parts) and relative_parts[0] == "record"
+
+
+def build_ko_reference_vectors_from_audio(
+    ko_reference_audio_dir: Path,
+    word_index: dict[str, list[TargetWord]],
+    en_reference_vectors: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    if not ko_reference_audio_dir.exists():
+        return {}
+
+    grouped_samples: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for audio_path in sorted(ko_reference_audio_dir.rglob("*")):
+        if not audio_path.is_file() or audio_path.suffix.lower() not in AUDIO_EXTENSIONS:
+            continue
+        if _is_inside_record_dir(audio_path, ko_reference_audio_dir):
+            continue
+        try:
+            target = find_target_by_filename(audio_path, word_index)
+        except ValueError:
+            continue
+        if target.phoneme not in KO_REFERENCE_PHONEMES:
+            continue
+        try:
+            waveform, sample_rate = load_trimmed_audio(audio_path)
+            features = extract_features(waveform, sample_rate)
+            grouped_samples[target.phoneme].append(features)
+        except Exception:
+            continue
+
+    ko_reference_vectors: dict[str, dict[str, Any]] = {}
+    for phoneme, samples in grouped_samples.items():
+        if not samples:
+            continue
+        phoneme_type = str(en_reference_vectors.get(phoneme, {}).get("phoneme_type", "unknown"))
+        ko_reference_vectors[phoneme] = _aggregate_ko_reference(samples, phoneme_type)
+    return ko_reference_vectors
+
+
+def load_ko_reference_vectors(
+    ko_reference_path: Path,
+    ko_reference_audio_dir: Path,
+    word_index: dict[str, list[TargetWord]],
+    en_reference_vectors: dict[str, dict[str, Any]],
+    disabled: bool,
+) -> tuple[dict[str, dict[str, Any]], str]:
+    if disabled:
+        return {}, "disabled"
+    if ko_reference_path.exists():
+        with ko_reference_path.open("r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            return loaded, str(ko_reference_path)
+    built = build_ko_reference_vectors_from_audio(ko_reference_audio_dir, word_index, en_reference_vectors)
+    return built, f"built_from_audio:{ko_reference_audio_dir}"
+
+
 def score_audio_file(
     *,
     label: str,
     audio_path: Path,
     target: TargetWord,
     reference_vectors: dict[str, dict[str, Any]],
+    ko_reference_vectors: dict[str, dict[str, Any]],
     word_targets: dict[str, Any],
     check_word_match: bool,
 ) -> dict[str, Any]:
     reference = reference_vectors.get(target.phoneme)
     if reference is None:
         raise KeyError(f"reference vector가 없습니다: /{target.phoneme}/")
+    ko_reference = ko_reference_vectors.get(target.phoneme)
 
     waveform, sample_rate = load_trimmed_audio(audio_path)
     include_onset = should_extract_onset(target.word, target.phoneme, word_targets)
@@ -183,6 +303,7 @@ def score_audio_file(
         user_features=features,
         reference=reference,
         phoneme=target.phoneme,
+        ko_reference=ko_reference,
         recording_quality_result=quality_result,
     )
     details = result.get("details", {})
@@ -192,6 +313,7 @@ def score_audio_file(
         "audio_path": audio_path.relative_to(PROJECT_ROOT).as_posix() if audio_path.is_relative_to(PROJECT_ROOT) else str(audio_path),
         "word": target.word,
         "phoneme": target.phoneme,
+        "has_ko_reference": ko_reference is not None,
         "score": safe_float(result.get("score")),
         "recording_quality_status": result.get("recording_quality_status"),
         "issue_flags": json.dumps(result.get("issue_flags") or [], ensure_ascii=False),
@@ -200,6 +322,8 @@ def score_audio_file(
         "rms_mean": safe_float(features.get("rms_mean")),
         "zcr_mean": safe_float(features.get("zcr_mean")),
         "spectral_centroid_mean": safe_float(features.get("spectral_centroid_mean")),
+        "korean_pattern_status": details.get("korean_pattern_status"),
+        "korean_pattern_penalty_policy": details.get("korean_pattern_penalty_policy"),
     }
     for key in DETAIL_FIELDS:
         row[key] = safe_float(details.get(key))
@@ -248,6 +372,13 @@ def score_none_rate(rows: list[dict[str, Any]]) -> float | None:
     return round(none_count / len(rows), 3)
 
 
+def ko_reference_rate(rows: list[dict[str, Any]]) -> float | None:
+    if not rows:
+        return None
+    count = sum(1 for row in rows if row.get("has_ko_reference"))
+    return round(count / len(rows), 3)
+
+
 def build_summary(results: list[dict[str, Any]], labels: list[str], threshold: float) -> dict[str, Any]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in results:
@@ -262,11 +393,14 @@ def build_summary(results: list[dict[str, Any]], labels: list[str], threshold: f
             "score": describe(scores),
             "score_none_rate": score_none_rate(rows),
             "quality_bad_rate": quality_bad_rate(rows),
+            "ko_reference_rate": ko_reference_rate(rows),
             "at_or_above_threshold_rate": rate_at_or_above(rows, threshold),
             "at_or_above_threshold_count": sum(1 for row in rows if (safe_float(row.get("score")) or -1) >= threshold),
             "avg_mfcc_score": describe(score_values(rows, "mfcc_score"))["avg"],
             "avg_rms_score": describe(score_values(rows, "rms_score"))["avg"],
             "avg_zcr_score": describe(score_values(rows, "zcr_score"))["avg"],
+            "avg_korean_like_penalty": describe(score_values(rows, "korean_like_penalty"))["avg"],
+            "avg_relative_distance_score": describe(score_values(rows, "relative_distance_score"))["avg"],
             "avg_total_penalty": describe(score_values(rows, "total_penalty"))["avg"],
         }
     return summary
@@ -295,7 +429,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def print_summary(summary: dict[str, Any], labels: list[str]) -> None:
     print("\nFolder score summary")
-    print("label           count  avg     median  >=75_rate  none_rate  bad_rate  rms_avg  zcr_avg")
+    print("label           count  avg     median  >=75_rate  none_rate  ko_ref  ko_pen  rms_avg  zcr_avg")
     for label in labels:
         data = summary[label]
         score = data["score"]
@@ -305,7 +439,8 @@ def print_summary(summary: dict[str, Any], labels: list[str]) -> None:
             f"{score['median'] if score['median'] is not None else '-':>7} "
             f"{data['at_or_above_threshold_rate'] if data['at_or_above_threshold_rate'] is not None else '-':>9} "
             f"{data['score_none_rate'] if data['score_none_rate'] is not None else '-':>9} "
-            f"{data['quality_bad_rate'] if data['quality_bad_rate'] is not None else '-':>8} "
+            f"{data['ko_reference_rate'] if data['ko_reference_rate'] is not None else '-':>7} "
+            f"{data['avg_korean_like_penalty'] if data['avg_korean_like_penalty'] is not None else '-':>7} "
             f"{data['avg_rms_score'] if data['avg_rms_score'] is not None else '-':>8} "
             f"{data['avg_zcr_score'] if data['avg_zcr_score'] is not None else '-':>8}"
         )
@@ -321,6 +456,13 @@ def main() -> None:
     target_words = load_target_words()
     word_index = build_word_index(target_words)
     reference_vectors = load_reference_vectors()
+    ko_reference_vectors, ko_reference_source = load_ko_reference_vectors(
+        args.ko_reference_path,
+        args.ko_reference_audio_dir,
+        word_index,
+        reference_vectors,
+        args.disable_ko_reference,
+    )
     word_targets = load_word_targets()
     audio_files = collect_audio_files(args.source_dir, args.labels)
 
@@ -336,6 +478,7 @@ def main() -> None:
                 audio_path=audio_path,
                 target=target,
                 reference_vectors=reference_vectors,
+                ko_reference_vectors=ko_reference_vectors,
                 word_targets=word_targets,
                 check_word_match=args.check_word_match,
             )
@@ -360,6 +503,8 @@ def main() -> None:
         "labels": args.labels,
         "score_threshold": args.score_threshold,
         "check_word_match": args.check_word_match,
+        "ko_reference_source": ko_reference_source,
+        "ko_reference_phonemes": sorted(ko_reference_vectors.keys()),
         "parameters": {
             "rms_floor": args.rms_floor,
             "rms_tolerance": args.rms_tolerance,
@@ -385,6 +530,8 @@ def main() -> None:
     write_csv(failures_path, failures)
     write_csv(errors_path, errors)
 
+    print(f"ko_reference_source: {ko_reference_source}")
+    print(f"ko_reference_phonemes: {', '.join(sorted(ko_reference_vectors.keys())) or '-'}")
     print_summary(summary, args.labels)
     print("\nSaved reports")
     print(f"summary : {summary_path}")
