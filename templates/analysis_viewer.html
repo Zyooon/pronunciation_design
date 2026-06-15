@@ -187,7 +187,7 @@
     <section id="tab-label-review" class="tab-panel">
       <div class="panel-toolbar">
         <h2 class="panel-title">Label Review</h2>
-        <span class="panel-hint">녹음 파일을 듣고 good / korean_like / wrong_or_noisy / exclude 라벨을 지정합니다.</span>
+        <span class="panel-hint">녹음 파일을 듣고 라벨을 지정합니다. 단어명을 누르면 Word Compare로 이동합니다.</span>
         <div class="filter-row">
           <label>라벨
             <select id="label-review-filter">
@@ -211,15 +211,10 @@
     <section id="tab-word-compare" class="tab-panel">
       <div class="panel-toolbar">
         <h2 class="panel-title">Word Compare</h2>
-        <span class="panel-hint">단어를 선택하면 해당 사용자 녹음과 영어 reference 평균을 그래프로 비교합니다.</span>
-        <div class="filter-row">
-          <label>단어
-            <select id="word-compare-select"><option value="">불러오는 중...</option></select>
-          </label>
-        </div>
+        <span class="panel-hint">Label Review 탭에서 단어명을 선택하면 해당 녹음과 영어 reference 평균을 비교합니다.</span>
       </div>
       <div id="word-compare-wrap">
-        <div class="spinner-wrap"><div class="spinner"></div></div>
+        <div class="no-data-msg">Label Review 탭에서 비교할 단어명을 선택하세요.</div>
       </div>
     </section>
 
@@ -227,6 +222,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <script src="{{ url_for('static', path='js/analysis_viewer.js') }}"></script>
+  <script src="{{ url_for('static', path='js/word_compare_bridge.js') }}"></script>
   <script src="{{ url_for('static', path='js/label_review.js') }}"></script>
 </body>
 </html>
