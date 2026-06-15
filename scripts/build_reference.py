@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from pipeline.audio import load_trimmed_audio
 from pipeline.features import extract_features
-from pipeline.word_targets import WordTarget, load_word_targets
+from pipeline.word_targets import WordTarget, load_word_targets, should_extract_onset
 
 
 DEFAULT_WORDS_PATH = PROJECT_ROOT / "data" / "words.txt"
@@ -28,6 +28,14 @@ SEQUENCE_FEATURE_KEYS = (
     "mfcc_middle_mean",
     "mfcc_end_mean",
     "delta_mfcc_mean",
+)
+ONSET_SCALAR_FEATURE_KEYS = (
+    "onset_rms_mean",
+    "onset_window_ms",
+    "onset_spectral_centroid_mean",
+)
+ONSET_SEQUENCE_FEATURE_KEYS = (
+    "onset_mfcc_mean",
 )
 
 
@@ -78,6 +86,14 @@ def _aggregate_feature(samples: list[dict], key: str) -> tuple[list[float], list
     return np.mean(arr, axis=0).round(6).tolist(), np.std(arr, axis=0).round(6).tolist()
 
 
+def _aggregate_scalar_feature(samples: list[dict], key: str) -> tuple[float, float] | None:
+    values = [float(sample[key]) for sample in samples if key in sample]
+    if not values:
+        return None
+    arr = np.array(values, dtype=float)
+    return round(float(np.mean(arr)), 6), round(float(np.std(arr)), 6)
+
+
 def _collect_phonemes_needing_onset(word_targets: dict[str, WordTarget]) -> frozenset[str]:
     return frozenset(
         target.target_phoneme
@@ -107,7 +123,7 @@ def aggregate_reference_vectors(samples: list[dict]) -> dict:
         "sample_count": len(samples),
     }
 
-    for key in SEQUENCE_FEATURE_KEYS:
+    for key in SEQUENCE_FEATURE_KEYS + ONSET_SEQUENCE_FEATURE_KEYS:
         aggregated = _aggregate_feature(samples, key)
         if aggregated is None:
             continue
@@ -115,11 +131,13 @@ def aggregate_reference_vectors(samples: list[dict]) -> dict:
         vector[key] = mean_values
         vector[f"{key}_std"] = std_values
 
-    onset_rms_values = [float(s["onset_rms_mean"]) for s in samples if "onset_rms_mean" in s]
-    if onset_rms_values:
-        onset_rms_arr = np.array(onset_rms_values, dtype=float)
-        vector["onset_rms_mean"] = round(float(np.mean(onset_rms_arr)), 6)
-        vector["onset_rms_std"] = round(float(np.std(onset_rms_arr)), 6)
+    for key in ONSET_SCALAR_FEATURE_KEYS:
+        aggregated = _aggregate_scalar_feature(samples, key)
+        if aggregated is None:
+            continue
+        mean_value, std_value = aggregated
+        vector[key] = mean_value
+        vector[f"{key}_std"] = std_value
 
     return vector
 
@@ -150,7 +168,7 @@ def build_reference_vectors(words_path: Path, reference_audio_dir: Path, output_
         test_words_by_phoneme.setdefault(phoneme, set())
         korean_by_word[word] = korean_pronunciation
 
-        include_onset = phoneme in onset_phonemes
+        include_onset = should_extract_onset(word, phoneme, word_targets)
         for audio_path in audio_files:
             try:
                 y, sr = load_trimmed_audio(audio_path)
@@ -159,7 +177,8 @@ def build_reference_vectors(words_path: Path, reference_audio_dir: Path, output_
                 features["source_file"] = str(audio_path.resolve().relative_to(PROJECT_ROOT.resolve()))
                 grouped_samples[phoneme].append(features)
                 test_words_by_phoneme[phoneme].add(word)
-                print(f"[OK] {word} ({phoneme}) <- {audio_path}")
+                onset_note = " + onset" if include_onset else ""
+                print(f"[OK] {word} ({phoneme}){onset_note} <- {audio_path}")
             except Exception as exc:
                 print(f"[SKIP] Failed to process {audio_path}: {exc}")
 
@@ -182,6 +201,8 @@ def build_reference_vectors(words_path: Path, reference_audio_dir: Path, output_
     print()
     print(f"Saved reference vectors to: {output_path}")
     print(f"Phonemes: {', '.join(reference_vectors.keys())}")
+    if onset_phonemes:
+        print(f"Onset phonemes configured: {', '.join(sorted(onset_phonemes))}")
     if missing_words:
         print()
         print("[WARN] Audio files not found for these words:")
