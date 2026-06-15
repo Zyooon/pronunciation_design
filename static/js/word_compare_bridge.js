@@ -16,11 +16,11 @@
   ];
 
   const SCORE_METRICS = [
-    ["mfcc_score", "MFCC score", "높을수록 음색/입 모양이 reference와 가깝습니다.", "higher"],
-    ["duration_score", "Duration score", "높을수록 길이가 reference와 가깝습니다.", "higher"],
-    ["zcr_score", "ZCR score", "높을수록 자음 명확성이 reference와 가깝습니다.", "higher"],
-    ["rms_score", "RMS score", "높을수록 강세/볼륨이 reference와 가깝습니다.", "higher"],
-    ["spectral_centroid_score", "Spectral score", "높을수록 주파수 중심이 reference와 가깝습니다.", "higher"],
+    ["mfcc_score", "MFCC score", "높을수록 음색/입 모양이 reference와 가깝습니다.", "higher", "음색·입 모양"],
+    ["duration_score", "Duration score", "높을수록 길이가 reference와 가깝습니다.", "higher", "발음 길이·속도"],
+    ["zcr_score", "ZCR score", "높을수록 자음 명확성이 reference와 가깝습니다.", "higher", "자음 명확성"],
+    ["rms_score", "RMS score", "높을수록 강세/볼륨이 reference와 가깝습니다.", "higher", "강세·볼륨"],
+    ["spectral_centroid_score", "Spectral score", "높을수록 주파수 중심이 reference와 가깝습니다.", "higher", "음색 주파수"],
   ];
 
   const ONSET_METRICS = [
@@ -129,11 +129,12 @@
   }
 
   function collectScoreMetrics(row) {
-    return SCORE_METRICS.map(([key, label, description, goodDirection]) => ({
+    return SCORE_METRICS.map(([key, label, description, goodDirection, koreanLabel]) => ({
       key,
       label,
       description,
       goodDirection,
+      koreanLabel: koreanLabel || label,
       value: numOrNull(row[key]),
     }));
   }
@@ -249,7 +250,9 @@
 
   function renderElevenLabsScoreSection(row, scoreMetrics, mfccDistance) {
     const { usedScores, unusedScores, missingExpectedScores } = groupScoreMetrics(scoreMetrics, row.phoneme);
-    const chartHeight = Math.max(160, usedScores.length * 60);
+    const finalScore = numOrNull(row.final_score ?? row.score);
+    const weakest = findWeakestScore(usedScores);
+    const chartHeight = Math.max(160, usedScores.length * 64);
     return `
       <section class="word-compare-section">
         <div class="word-compare-section-head">
@@ -258,17 +261,51 @@
             <p>scorer가 ElevenLabs reference와 비교해 계산한 결과입니다. score 계열은 0~100점이며 높을수록 좋습니다.</p>
           </div>
         </div>
-        ${renderMfccDistanceCard(mfccDistance)}
+        ${renderFinalScoreBanner(finalScore)}
+        ${weakest ? renderWeakestBanner(weakest) : ""}
         ${usedScores.length ? `
           <div class="chart-box word-compare-chart-box">
-            <div class="chart-title">Score (0~100)</div>
+            <div class="chart-title">항목별 점수 (0~100)</div>
             <div class="chart-canvas-wrap" style="height:${chartHeight}px;"><canvas id="chart-en-reference-scores"></canvas></div>
           </div>
         ` : ""}
-        ${unusedScores.length ? renderUnusedScoresSection(unusedScores) : ""}
-        ${missingExpectedScores.length ? renderMissingExpectedScoresSection(missingExpectedScores) : ""}
+        <details style="margin-top:14px;">
+          <summary style="cursor:pointer;font-size:13px;color:#64748b;padding:6px 2px;user-select:none;">개발자 상세 정보 (MFCC distance · 미사용 지표)</summary>
+          <div style="margin-top:8px;">
+            ${renderMfccDistanceCard(mfccDistance)}
+            ${unusedScores.length ? renderUnusedScoresSection(unusedScores) : ""}
+            ${missingExpectedScores.length ? renderMissingExpectedScoresSection(missingExpectedScores) : ""}
+          </div>
+        </details>
       </section>
     `;
+  }
+
+  function renderFinalScoreBanner(score) {
+    const color = scoreColor(score);
+    const label = scoreLabel(score);
+    return `
+      <div style="display:flex;align-items:center;gap:20px;padding:16px 22px;border-radius:10px;background:#f8fafc;border:2px solid ${color}33;margin-bottom:14px;">
+        <div style="font-size:56px;font-weight:800;color:${color};line-height:1;letter-spacing:-2px;">${formatValue(score, 0)}</div>
+        <div>
+          <div style="font-size:12px;color:#94a3b8;margin-bottom:2px;">종합 점수 / 100</div>
+          <div style="font-size:15px;font-weight:700;color:${color};">${escHtml(label)}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderWeakestBanner(weakest) {
+    return `
+      <div style="padding:9px 14px;border-radius:8px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;font-size:13px;margin-bottom:12px;">
+        ⚠ 가장 약한 부분: <strong>${escHtml(weakest.koreanLabel)}</strong> (${escHtml(weakest.label)} ${formatValue(weakest.value, 0)}점)
+      </div>
+    `;
+  }
+
+  function findWeakestScore(usedScores) {
+    if (!usedScores.length) return null;
+    return usedScores.reduce((min, m) => (m.value < min.value ? m : min), usedScores[0]);
   }
 
   function renderMfccDistanceCard(mfccDistance) {
@@ -406,19 +443,33 @@
   function renderScoreChart(canvasId, metrics, mode = "english") {
     const canvas = document.getElementById(canvasId);
     if (!canvas || !metrics.length || typeof Chart === "undefined") return;
-    const color = mode === "korean" ? "rgba(249,115,22,0.72)" : "rgba(59,130,246,0.72)";
-    const border = mode === "korean" ? "#f97316" : "#3b82f6";
+
+    let labels, backgroundColors, borderColors, datasetLabel, maxX;
+    if (mode === "korean") {
+      labels = metrics.map((m) => m.label);
+      backgroundColors = "rgba(249,115,22,0.72)";
+      borderColors = "#f97316";
+      datasetLabel = "Korean pattern";
+      maxX = undefined;
+    } else {
+      labels = metrics.map((m) => [m.koreanLabel || m.label, m.label]);
+      backgroundColors = metrics.map((m) => scoreColorAlpha(m.value));
+      borderColors = metrics.map((m) => scoreColor(m.value));
+      datasetLabel = "Score";
+      maxX = 100;
+    }
+
     new Chart(canvas, {
       type: "bar",
       data: {
-        labels: metrics.map((m) => m.label),
-        datasets: [{ label: mode === "korean" ? "Korean pattern" : "Score / distance", data: metrics.map((m) => m.value), backgroundColor: color, borderColor: border, borderWidth: 1 }],
+        labels,
+        datasets: [{ label: datasetLabel, data: metrics.map((m) => m.value), backgroundColor: backgroundColors, borderColor: borderColors, borderWidth: 1 }],
       },
       options: {
         indexAxis: "y",
         responsive: true,
         maintainAspectRatio: false,
-        scales: { x: { beginAtZero: true } },
+        scales: { x: { beginAtZero: true, ...(maxX != null ? { max: maxX } : {}) } },
         plugins: { legend: { display: false } },
       },
     });
@@ -464,6 +515,27 @@
       return `현재 발음은 영어 ${phoneme} reference보다 한국어식 패턴에 더 가까운 경향이 있습니다.`;
     }
     return `현재 발음은 한국어식 reference보다 영어 ${phoneme} reference에 더 가까운 경향이 있습니다.`;
+  }
+
+  function scoreColor(value) {
+    if (value == null) return "#94a3b8";
+    if (value < 40) return "#ef4444";
+    if (value < 70) return "#f59e0b";
+    return "#22c55e";
+  }
+
+  function scoreColorAlpha(value) {
+    if (value == null) return "rgba(148,163,184,0.5)";
+    if (value < 40) return "rgba(239,68,68,0.72)";
+    if (value < 70) return "rgba(245,158,11,0.72)";
+    return "rgba(34,197,94,0.72)";
+  }
+
+  function scoreLabel(value) {
+    if (value == null) return "—";
+    if (value < 40) return "개선 필요";
+    if (value < 70) return "보통";
+    return "좋음";
   }
 
   function directionText(direction) {
