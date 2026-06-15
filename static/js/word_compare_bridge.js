@@ -1,18 +1,26 @@
 // Label Review -> Word Compare 연결 전용 스크립트
 // Word Compare는 analysis_viewer 전용 진단 화면으로 사용한다.
-// 현재 DB/details_json에 실제 저장되는 값 기준으로 렌더링한다.
+// 메인 비교 기준은 선택한 녹음 row vs ElevenLabs 영어 reference 평균이다.
 
 (function () {
   const WORD_COMPARE_PLACEHOLDER = `<div class="no-data-msg">Label Review 탭에서 비교할 단어명을 선택하세요.</div>`;
   const CONSONANT_PHONEMES = new Set(["θ", "f", "v", "r", "l", "s", "z", "ʃ", "tʃ", "dʒ", "p", "b", "t", "d", "k", "g"]);
+  let referenceRows = [];
 
-  const ENGLISH_REFERENCE_METRICS = [
-    ["mfcc_distance", "MFCC distance", "낮을수록 영어 reference와 가깝습니다.", "distance", "lower"],
-    ["mfcc_score", "MFCC score", "높을수록 음색/입 모양이 reference와 가깝습니다.", "score", "higher"],
-    ["duration_score", "Duration score", "높을수록 길이가 reference와 가깝습니다.", "score", "higher"],
-    ["zcr_score", "ZCR score", "높을수록 자음 명확성이 reference와 가깝습니다.", "score", "higher"],
-    ["rms_score", "RMS score", "높을수록 강세/볼륨이 reference와 가깝습니다.", "score", "higher"],
-    ["spectral_centroid_score", "Spectral score", "높을수록 주파수 중심이 reference와 가깝습니다.", "score", "higher"],
+  const RAW_REFERENCE_METRICS = [
+    ["duration_ms", "duration_ms", "Duration", "ms", "낮거나 높음보다 reference 평균에 가까운지가 중요합니다."],
+    ["zcr_mean", "zcr_mean", "ZCR", "raw", "자음 명확성 관련 평균값입니다."],
+    ["rms_mean", "rms_mean", "RMS", "raw", "강세/볼륨 관련 평균값입니다."],
+    ["spectral_centroid_mean", "spectral_centroid_mean", "Spectral centroid", "Hz", "소리 밝기/주파수 중심 관련 평균값입니다."],
+  ];
+
+  const SCORE_METRICS = [
+    ["mfcc_distance", "MFCC distance", "낮을수록 ElevenLabs reference와 가깝습니다.", "lower"],
+    ["mfcc_score", "MFCC score", "높을수록 음색/입 모양이 reference와 가깝습니다.", "higher"],
+    ["duration_score", "Duration score", "높을수록 길이가 reference와 가깝습니다.", "higher"],
+    ["zcr_score", "ZCR score", "높을수록 자음 명확성이 reference와 가깝습니다.", "higher"],
+    ["rms_score", "RMS score", "높을수록 강세/볼륨이 reference와 가깝습니다.", "higher"],
+    ["spectral_centroid_score", "Spectral score", "높을수록 주파수 중심이 reference와 가깝습니다.", "higher"],
   ];
 
   const ONSET_METRICS = [
@@ -35,10 +43,22 @@
     wrap.innerHTML = WORD_COMPARE_PLACEHOLDER;
   };
 
-  window.openWordCompareFromLabelReview = function openWordCompareFromLabelReview(row) {
+  window.openWordCompareFromLabelReview = async function openWordCompareFromLabelReview(row) {
     if (!row) return;
     activateAnalysisTab("word-compare");
-    renderWordCompareFromRow(normalizeLabelReviewRow(row));
+    const wrap = document.getElementById("word-compare-wrap");
+    if (wrap) wrap.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+
+    try {
+      if (!referenceRows.length) {
+        referenceRows = await fetchJson("/api/reference-quality");
+      }
+      const normalizedRow = normalizeLabelReviewRow(row);
+      const englishReference = findEnglishReference(normalizedRow.phoneme);
+      renderWordCompareFromRow(normalizedRow, englishReference);
+    } catch (err) {
+      if (wrap) wrap.innerHTML = errorHtml(err.message);
+    }
   };
 
   function activateAnalysisTab(tabId) {
@@ -67,35 +87,49 @@
     };
   }
 
-  function renderWordCompareFromRow(row) {
+  function findEnglishReference(phoneme) {
+    return (referenceRows || []).find((ref) => String(ref.phoneme || "") === String(phoneme || "")) || null;
+  }
+
+  function renderWordCompareFromRow(row, englishReference) {
     if (typeof _destroyWordCompareCharts === "function") {
       _destroyWordCompareCharts();
     }
     const wrap = document.getElementById("word-compare-wrap");
     if (!wrap) return;
 
-    const englishMetrics = collectEnglishReferenceMetrics(row);
+    const rawMetrics = collectRawReferenceMetrics(row, englishReference);
+    const scoreMetrics = collectScoreMetrics(row);
     const onsetMetrics = collectOnsetMetrics(row);
     const koreanMetrics = collectKoreanPatternMetrics(row);
-    const hasAnyMetric = [...englishMetrics, ...onsetMetrics, ...koreanMetrics].some((m) => m.value != null);
+    const hasAnyMetric = [...rawMetrics, ...scoreMetrics, ...onsetMetrics, ...koreanMetrics].some((m) => m.userValue != null || m.value != null);
 
     wrap.innerHTML = `
-      ${renderSummarySection(row)}
-      ${renderEnglishReferenceSection(row, englishMetrics, onsetMetrics)}
+      ${renderSummarySection(row, englishReference)}
+      ${renderEnglishReferenceSection(row, englishReference, rawMetrics, scoreMetrics, onsetMetrics)}
       ${renderKoreanPatternSection(row, koreanMetrics)}
       ${!hasAnyMetric ? renderMissingMetricNotice() : ""}
     `;
 
-    renderMetricChart("chart-en-reference-scores", englishMetrics.filter((m) => m.value != null), "english");
-    renderMetricChart("chart-ko-pattern", koreanMetrics.filter((m) => m.value != null), "korean");
+    renderReferenceComparisonChart("chart-en-reference-raw", rawMetrics.filter((m) => m.userValue != null || m.refValue != null));
+    renderScoreChart("chart-en-reference-scores", scoreMetrics.filter((m) => m.value != null));
+    renderScoreChart("chart-ko-pattern", koreanMetrics.filter((m) => m.value != null), "korean");
   }
 
-  function collectEnglishReferenceMetrics(row) {
-    return ENGLISH_REFERENCE_METRICS.map(([key, label, description, type, goodDirection]) => ({
+  function collectRawReferenceMetrics(row, reference) {
+    return RAW_REFERENCE_METRICS.map(([userKey, refKey, label, unit, description]) => {
+      const userValue = numOrNull(row[userKey]);
+      const refValue = numOrNull(reference?.[refKey]);
+      const ratio = userValue != null && refValue != null && Math.abs(refValue) > 0 ? userValue / refValue : null;
+      return { userKey, refKey, label, unit, description, userValue, refValue, ratio };
+    });
+  }
+
+  function collectScoreMetrics(row) {
+    return SCORE_METRICS.map(([key, label, description, goodDirection]) => ({
       key,
       label,
       description,
-      type,
       goodDirection,
       value: numOrNull(row[key]),
     }));
@@ -106,7 +140,6 @@
       key,
       label,
       description,
-      type: "raw",
       goodDirection: "observe",
       value: numOrNull(row[key]),
     }));
@@ -117,13 +150,12 @@
       key,
       label,
       description,
-      type: key.includes("penalty") ? "penalty" : "distance",
       goodDirection,
       value: numOrNull(row[key]),
     }));
   }
 
-  function renderSummarySection(row) {
+  function renderSummarySection(row, englishReference) {
     const label = row.test_label || "unlabeled";
     const score = row.final_score ?? row.score;
     return `
@@ -131,13 +163,14 @@
         <div class="word-compare-section-head">
           <div>
             <h3>종합 요약</h3>
-            <p>Label Review에서 선택한 녹음 row 기준입니다.</p>
+            <p>Label Review에서 선택한 녹음 row와 ElevenLabs 영어 reference 평균을 비교합니다.</p>
           </div>
           <span class="pill pill-muted">Recording ID ${row.id ?? "—"}</span>
         </div>
         <div class="stat-grid user-summary-grid">
           <div class="stat-card"><div class="stat-label">Word</div><div class="user-stat-value">${escHtml(row.word || "")}</div></div>
           <div class="stat-card"><div class="stat-label">Phoneme</div><div class="user-stat-value">/${escHtml(row.phoneme || "")}/</div></div>
+          <div class="stat-card"><div class="stat-label">Reference</div><div class="user-stat-value" style="font-size:22px;">${englishReference ? "ElevenLabs" : "없음"}</div></div>
           <div class="stat-card"><div class="stat-label">Label</div><div class="user-stat-value" style="font-size:22px;color:${_labelColor(row.test_label ?? "NULL", "border")};">${escHtml(label)}</div></div>
           <div class="stat-card"><div class="stat-label">Score</div><div class="user-stat-value">${formatValue(score, 1)}</div></div>
           <div class="stat-card"><div class="stat-label">Duration Ratio</div><div class="user-stat-value">${formatRatio(row.duration_ratio)}</div></div>
@@ -148,38 +181,74 @@
     `;
   }
 
-  function renderEnglishReferenceSection(row, metrics, onsetMetrics) {
+  function renderEnglishReferenceSection(row, englishReference, rawMetrics, scoreMetrics, onsetMetrics) {
     const shouldShowOnset = isConsonantPhoneme(row.phoneme) && onsetMetrics.some((m) => m.value != null);
     return `
       <section class="word-compare-section">
         <div class="word-compare-section-head">
           <div>
             <h3>영어 Reference 비교</h3>
-            <p>distance는 낮을수록 좋고, score는 높을수록 좋습니다. 현재 실제 저장된 metric만 표시합니다.</p>
+            <p>현재 녹음 row의 raw feature를 같은 음소의 ElevenLabs 영어 reference 평균과 나란히 비교합니다.</p>
+          </div>
+          <span class="pill ${englishReference ? "pill-ok" : "pill-warn"}">${englishReference ? "reference found" : "reference missing"}</span>
+        </div>
+        ${!englishReference ? `<div class="no-data-msg" style="margin-bottom:14px;">/${escHtml(row.phoneme || "")}/에 해당하는 ElevenLabs reference 평균을 찾지 못했습니다.</div>` : ""}
+        <div class="word-compare-group-grid">
+          ${rawMetrics.map(renderRawReferenceCard).join("")}
+        </div>
+        <div class="chart-box word-compare-chart-box">
+          <div class="chart-title">Recording row vs ElevenLabs average</div>
+          <div class="chart-canvas-wrap" style="height:320px;"><canvas id="chart-en-reference-raw"></canvas></div>
+        </div>
+        <div class="word-compare-section-head" style="margin-top:18px;">
+          <div>
+            <h3 style="font-size:14px;">Reference 기반 점수/거리</h3>
+            <p>MFCC distance는 낮을수록 좋고, score 계열은 높을수록 좋습니다.</p>
           </div>
         </div>
         <div class="word-compare-group-grid">
-          ${metrics.map(renderMetricCard).join("")}
+          ${scoreMetrics.map(renderScoreMetricCard).join("")}
         </div>
-        ${shouldShowOnset ? renderOnsetSection(onsetMetrics) : ""}
         <div class="chart-box word-compare-chart-box">
-          <div class="chart-title">English Reference Metrics</div>
+          <div class="chart-title">Reference-derived scores and distance</div>
           <div class="chart-canvas-wrap" style="height:320px;"><canvas id="chart-en-reference-scores"></canvas></div>
         </div>
+        ${shouldShowOnset ? renderOnsetSection(onsetMetrics) : ""}
       </section>
+    `;
+  }
+
+  function renderRawReferenceCard(metric) {
+    return `
+      <div class="word-compare-card english">
+        <div class="word-compare-card-title">${escHtml(metric.label)} <span>${escHtml(metric.description)}</span></div>
+        <div class="word-compare-metric-row"><div><strong>Recording row</strong><span>현재 선택한 녹음</span></div><em>${formatMetricValue(metric.userValue, metric.unit)}</em></div>
+        <div class="word-compare-metric-row"><div><strong>ElevenLabs avg</strong><span>영어 reference 평균</span></div><em>${formatMetricValue(metric.refValue, metric.unit)}</em></div>
+        <div class="word-compare-metric-row"><div><strong>Ratio</strong><span>recording / reference</span></div><em>${metric.ratio != null ? formatValue(metric.ratio, 2) + "x" : "—"}</em></div>
+      </div>
+    `;
+  }
+
+  function renderScoreMetricCard(metric) {
+    return `
+      <div class="word-compare-card english">
+        <div class="word-compare-card-title">${escHtml(metric.label)} <span>${escHtml(metric.description)}</span></div>
+        <div class="word-compare-korean-value" style="color:${metric.goodDirection === "lower" ? "#1677c7" : "#10b981"};">${formatValue(metric.value)}</div>
+        <p style="color:#6b7c8f;font-size:12px;line-height:1.6;">${escHtml(directionText(metric.goodDirection))}</p>
+      </div>
     `;
   }
 
   function renderOnsetSection(onsetMetrics) {
     return `
-      <div class="word-compare-section-head" style="margin-top:12px;">
+      <div class="word-compare-section-head" style="margin-top:18px;">
         <div>
           <h3 style="font-size:14px;">Onset 지표</h3>
           <p>자음 시작 구간의 관찰값입니다. 현재는 좋고 나쁨을 직접 판정하지 않고 해석 보조용으로만 사용합니다.</p>
         </div>
       </div>
       <div class="word-compare-group-grid">
-        ${onsetMetrics.map(renderMetricCard).join("")}
+        ${onsetMetrics.map(renderScoreMetricCard).join("")}
       </div>
     `;
   }
@@ -199,7 +268,7 @@
           ${metrics.map(renderKoreanMetricCard).join("")}
         </div>
         <div class="chart-box word-compare-chart-box korean">
-          <div class="chart-title">Korean Pattern Metrics</div>
+          <div class="chart-title">Korean pattern metrics</div>
           <div class="chart-canvas-wrap" style="height:280px;"><canvas id="chart-ko-pattern"></canvas></div>
         </div>
       </section>
@@ -213,16 +282,6 @@
       <div class="meta-box" style="margin-bottom:14px;border-color:#fed7aa;background:#fff7ed;color:#9a3412;">
         <strong>진단:</strong> ${escHtml(diagnosis)}<br>
         <strong>정책:</strong> ${escHtml(policy)} · 한국어 reference는 최종 점수에 직접 더하지 않고 korean_like_penalty로만 반영합니다.
-      </div>
-    `;
-  }
-
-  function renderMetricCard(metric) {
-    return `
-      <div class="word-compare-card english">
-        <div class="word-compare-card-title">${escHtml(metric.label)} <span>${escHtml(metric.description)}</span></div>
-        <div class="word-compare-korean-value" style="color:${metric.goodDirection === "lower" ? "#1677c7" : "#10b981"};">${formatValue(metric.value)}</div>
-        <p style="color:#6b7c8f;font-size:12px;line-height:1.6;">${escHtml(directionText(metric.goodDirection))}</p>
       </div>
     `;
   }
@@ -247,7 +306,28 @@
     `;
   }
 
-  function renderMetricChart(canvasId, metrics, mode) {
+  function renderReferenceComparisonChart(canvasId, metrics) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas || !metrics.length || typeof Chart === "undefined") return;
+    new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: metrics.map((m) => m.label),
+        datasets: [
+          { label: "Recording row", data: metrics.map((m) => m.userValue), backgroundColor: "rgba(59,130,246,0.72)", borderColor: "#3b82f6", borderWidth: 1 },
+          { label: "ElevenLabs avg", data: metrics.map((m) => m.refValue), backgroundColor: "rgba(16,185,129,0.62)", borderColor: "#10b981", borderWidth: 1 },
+        ],
+      },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { x: { beginAtZero: true } },
+      },
+    });
+  }
+
+  function renderScoreChart(canvasId, metrics, mode = "english") {
     const canvas = document.getElementById(canvasId);
     if (!canvas || !metrics.length || typeof Chart === "undefined") return;
     const color = mode === "korean" ? "rgba(249,115,22,0.72)" : "rgba(59,130,246,0.72)";
@@ -256,7 +336,7 @@
       type: "bar",
       data: {
         labels: metrics.map((m) => m.label),
-        datasets: [{ label: mode === "korean" ? "Korean pattern" : "English reference", data: metrics.map((m) => m.value), backgroundColor: color, borderColor: border, borderWidth: 1 }],
+        datasets: [{ label: mode === "korean" ? "Korean pattern" : "Score / distance", data: metrics.map((m) => m.value), backgroundColor: color, borderColor: border, borderWidth: 1 }],
       },
       options: {
         indexAxis: "y",
@@ -296,6 +376,14 @@
     if (direction === "lower") return "낮을수록 좋음";
     if (direction === "higher") return "높을수록 좋음";
     return "관찰값";
+  }
+
+  function formatMetricValue(value, unit) {
+    const numeric = numOrNull(value);
+    if (numeric == null) return "—";
+    if (unit === "ms") return `${formatValue(numeric, 1)}ms`;
+    if (unit === "Hz") return `${formatValue(numeric, 1)}Hz`;
+    return formatValue(numeric, 6);
   }
 
   function formatValue(value, digits = 3) {
