@@ -28,7 +28,7 @@ DB_PATH                 = DATA_DIR / "pronunciation.db"
 
 USER_RECORDINGS_TABLE = "user_recordings"
 USER_RECORDINGS_LIMIT = 200
-LABEL_REVIEW_LIMIT = 300
+LABEL_REVIEW_PAGE_SIZE = 50
 ALLOWED_REVIEW_LABELS = {"good", "korean_like", "wrong_or_noisy", "unlabeled", "exclude", ""}
 
 # 테이블 표시 컬럼 (존재하는 것만 사용)
@@ -134,9 +134,13 @@ async def get_user_results(latest_only: bool = True) -> Response:
 
 
 @app.get("/api/label-review-results")
-async def get_label_review_results(label: str = "", limit: int = LABEL_REVIEW_LIMIT) -> Response:
-    """라벨 검수 탭에서 사용할 녹음 목록을 반환한다."""
-    payload = load_label_review_results(DB_PATH, label=label, limit=limit)
+async def get_label_review_results(
+    label: str = "",
+    page: int = 1,
+    limit: int = LABEL_REVIEW_PAGE_SIZE,
+) -> Response:
+    """라벨 검수 탭에서 사용할 녹음 목록을 페이지 단위로 반환한다."""
+    payload = load_label_review_results(DB_PATH, label=label, page=page, limit=limit)
     return _json_response(payload)
 
 
@@ -242,18 +246,12 @@ def load_user_results_from_db(
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
 
-        tables = {
-            row[0]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if USER_RECORDINGS_TABLE not in tables:
             result["error"] = f"{USER_RECORDINGS_TABLE} 테이블이 없습니다."
             return result
 
-        available_cols: set[str] = {
-            row["name"]
-            for row in conn.execute(f"PRAGMA table_info({USER_RECORDINGS_TABLE})")
-        }
+        available_cols: set[str] = {row["name"] for row in conn.execute(f"PRAGMA table_info({USER_RECORDINGS_TABLE})")}
         result["available_columns"] = sorted(available_cols)
 
         if latest_only:
@@ -281,16 +279,12 @@ def load_user_results_from_db(
         ]
 
         display_cols = [c for c in _TABLE_DISPLAY_COLS if c in available_cols]
-
-        total = conn.execute(
-            f"SELECT COUNT(*) FROM {USER_RECORDINGS_TABLE}"
-        ).fetchone()[0]
+        total = conn.execute(f"SELECT COUNT(*) FROM {USER_RECORDINGS_TABLE}").fetchone()[0]
 
         label_summary = [
             dict(row)
             for row in conn.execute(
-                f"{_cte}SELECT test_label, COUNT(*) AS count,"
-                f" ROUND(AVG(score), 1) AS avg_score"
+                f"{_cte}SELECT test_label, COUNT(*) AS count, ROUND(AVG(score), 1) AS avg_score"
                 f" FROM {_src} GROUP BY test_label ORDER BY test_label"
             )
         ]
@@ -298,16 +292,13 @@ def load_user_results_from_db(
         phoneme_label_breakdown = [
             dict(row)
             for row in conn.execute(
-                f"{_cte}SELECT phoneme, test_label, COUNT(*) AS count,"
-                f" ROUND(AVG(score), 1) AS avg_score"
+                f"{_cte}SELECT phoneme, test_label, COUNT(*) AS count, ROUND(AVG(score), 1) AS avg_score"
                 f" FROM {_src} GROUP BY phoneme, test_label ORDER BY phoneme, test_label"
             )
         ]
 
         score_by_label: dict[str, list[float]] = {}
-        for srow in conn.execute(
-            f"{_cte}SELECT test_label, score FROM {_src} WHERE score IS NOT NULL"
-        ):
+        for srow in conn.execute(f"{_cte}SELECT test_label, score FROM {_src} WHERE score IS NOT NULL"):
             key = srow["test_label"] or "NULL"
             score_by_label.setdefault(key, []).append(float(srow["score"]))
 
@@ -315,15 +306,8 @@ def load_user_results_from_db(
         good_avg  = avg_by_label.get("good")
         ko_avg    = avg_by_label.get("korean_like")
         wrong_avg = avg_by_label.get("wrong_or_noisy")
-        ordered = (
-            good_avg is not None and ko_avg is not None and wrong_avg is not None
-            and good_avg > ko_avg > wrong_avg
-        )
-        summary_cards = {
-            "latest_count": len(rows),
-            "avg_by_label": avg_by_label,
-            "ordered_correctly": ordered,
-        }
+        ordered = good_avg is not None and ko_avg is not None and wrong_avg is not None and good_avg > ko_avg > wrong_avg
+        summary_cards = {"latest_count": len(rows), "avg_by_label": avg_by_label, "ordered_correctly": ordered}
 
         avail_penalty = [c for c in _PENALTY_COLS if c in available_cols]
         penalty_summary = _query_group_avg(conn, _cte, _src, avail_penalty)
@@ -339,8 +323,7 @@ def load_user_results_from_db(
         score_comparison = [
             dict(row)
             for row in conn.execute(
-                f"{_cte}SELECT test_label, {', '.join(score_cmp_parts)}"
-                f" FROM {_src} GROUP BY test_label ORDER BY test_label"
+                f"{_cte}SELECT test_label, {', '.join(score_cmp_parts)} FROM {_src} GROUP BY test_label ORDER BY test_label"
             )
         ]
 
@@ -368,12 +351,23 @@ def load_user_results_from_db(
             conn.close()
 
 
-def load_label_review_results(db_path: Path, label: str = "", limit: int = LABEL_REVIEW_LIMIT) -> dict[str, Any]:
-    """라벨 검수용 user_recordings 목록을 조회한다."""
+def load_label_review_results(
+    db_path: Path,
+    label: str = "",
+    page: int = 1,
+    limit: int = LABEL_REVIEW_PAGE_SIZE,
+) -> dict[str, Any]:
+    """라벨 검수용 user_recordings 목록을 페이지 단위로 조회한다."""
+    page_size = max(1, min(limit, 50))
+    current_page = max(1, page)
+    offset = (current_page - 1) * page_size
     result: dict[str, Any] = {
         "exists": db_path.exists(),
         "rows": [],
         "row_count": 0,
+        "page": current_page,
+        "page_size": page_size,
+        "total_pages": 0,
         "error": None,
         "label": label,
     }
@@ -401,18 +395,19 @@ def load_label_review_results(db_path: Path, label: str = "", limit: int = LABEL
                 dict(row)
                 for row in conn.execute(
                     f"""
-                    SELECT id, created_at, word, phoneme, test_label, score, grade, feedback,
+                    SELECT id, created_at, word, phoneme, test_label, score, grade,
                            recording_path, duration_ms, rms_mean, zcr_mean,
                            spectral_centroid_mean, mfcc_distance, total_penalty
                     FROM {USER_RECORDINGS_TABLE}
                     {where}
                     ORDER BY id DESC
-                    LIMIT ?
+                    LIMIT ? OFFSET ?
                     """,
-                    [*params, max(1, min(limit, 1000))],
+                    [*params, page_size, offset],
                 )
             ]
-            result.update({"rows": rows, "row_count": count})
+            total_pages = (count + page_size - 1) // page_size if count else 0
+            result.update({"rows": rows, "row_count": count, "total_pages": total_pages})
             return result
     except sqlite3.Error as e:
         result["error"] = str(e)
@@ -423,10 +418,7 @@ def get_recording_path_by_id(db_path: Path, recording_id: int) -> str | None:
     if not db_path.exists():
         return None
     with sqlite3.connect(str(db_path)) as conn:
-        row = conn.execute(
-            f"SELECT recording_path FROM {USER_RECORDINGS_TABLE} WHERE id = ?",
-            (recording_id,),
-        ).fetchone()
+        row = conn.execute(f"SELECT recording_path FROM {USER_RECORDINGS_TABLE} WHERE id = ?", (recording_id,)).fetchone()
     return row[0] if row and row[0] else None
 
 
@@ -434,10 +426,7 @@ def update_recording_label(db_path: Path, recording_id: int, label: str | None) 
     if not db_path.exists():
         return False
     with sqlite3.connect(str(db_path)) as conn:
-        cur = conn.execute(
-            f"UPDATE {USER_RECORDINGS_TABLE} SET test_label = ? WHERE id = ?",
-            (label, recording_id),
-        )
+        cur = conn.execute(f"UPDATE {USER_RECORDINGS_TABLE} SET test_label = ? WHERE id = ?", (label, recording_id))
         conn.commit()
         return cur.rowcount > 0
 
@@ -446,12 +435,7 @@ def resolve_recording_path(recording_path: str) -> Path | None:
     raw_path = Path(recording_path)
     candidates = [raw_path]
     if not raw_path.is_absolute():
-        candidates.extend([
-            PROJECT_ROOT / raw_path,
-            DATA_DIR / raw_path,
-            PROJECT_ROOT / "recordings" / raw_path,
-            DATA_DIR / "recordings" / raw_path,
-        ])
+        candidates.extend([PROJECT_ROOT / raw_path, DATA_DIR / raw_path, PROJECT_ROOT / "recordings" / raw_path, DATA_DIR / "recordings" / raw_path])
     for candidate in candidates:
         try:
             resolved = candidate.resolve()
@@ -475,32 +459,16 @@ def guess_audio_media_type(file_path: Path) -> str:
     return "audio/wav"
 
 
-def _query_group_avg(
-    conn: sqlite3.Connection,
-    cte: str,
-    src: str,
-    cols: list[str],
-) -> list[dict[str, Any]] | None:
-    """cols 컬럼 목록에 대해 test_label별 AVG를 집계한다.
-
-    데이터가 없거나 cols가 비어 있으면 None을 반환한다.
-    """
+def _query_group_avg(conn: sqlite3.Connection, cte: str, src: str, cols: list[str]) -> list[dict[str, Any]] | None:
+    """cols 컬럼 목록에 대해 test_label별 AVG를 집계한다."""
     if not cols:
         return None
     has_data_expr = " OR ".join(f"{c} IS NOT NULL" for c in cols)
-    count = conn.execute(
-        f"{cte}SELECT COUNT(*) FROM {src} WHERE {has_data_expr}"
-    ).fetchone()[0]
+    count = conn.execute(f"{cte}SELECT COUNT(*) FROM {src} WHERE {has_data_expr}").fetchone()[0]
     if count == 0:
         return None
     avg_exprs = ", ".join(f"ROUND(AVG({c}), 2) AS avg_{c}" for c in cols)
-    return [
-        dict(row)
-        for row in conn.execute(
-            f"{cte}SELECT test_label, {avg_exprs}"
-            f" FROM {src} GROUP BY test_label ORDER BY test_label"
-        )
-    ]
+    return [dict(row) for row in conn.execute(f"{cte}SELECT test_label, {avg_exprs} FROM {src} GROUP BY test_label ORDER BY test_label")]
 
 
 # ── 데이터 빌더 ──────────────────────────────────────────────────────────────
@@ -510,33 +478,27 @@ def is_success_row(row: dict[str, Any]) -> bool:
     return row.get("status", "ok") in {"ok", "success"}
 
 
-def build_overview_summary(
-    reference_vectors: dict[str, Any],
-    comparison_results: dict[str, Any],
-    analysis_report: dict[str, Any] | None,
-) -> dict[str, Any]:
+def build_overview_summary(reference_vectors: dict[str, Any], comparison_results: dict[str, Any], analysis_report: dict[str, Any] | None) -> dict[str, Any]:
     """전체 요약 dict를 빌드한다."""
     results = comparison_results.get("results", [])
     successful_results = [r for r in results if is_success_row(r)]
-    error_results      = [r for r in results if r.get("status") == "error"]
-
-    phoneme_count_ref    = len(reference_vectors)
-    total_sample_count   = sum(v.get("sample_count", 0) for v in reference_vectors.values())
+    error_results = [r for r in results if r.get("status") == "error"]
+    phoneme_count_ref = len(reference_vectors)
+    total_sample_count = sum(v.get("sample_count", 0) for v in reference_vectors.values())
     total_word_count_ref = sum(len(v.get("test_words", [])) for v in reference_vectors.values())
-    analyzed_phonemes    = len({r.get("phoneme") for r in successful_results if r.get("phoneme")})
-    outlier_count        = _count_outliers_from_report(analysis_report)
-
+    analyzed_phonemes = len({r.get("phoneme") for r in successful_results if r.get("phoneme")})
+    outlier_count = _count_outliers_from_report(analysis_report)
     return {
-        "reference_phoneme_count":  phoneme_count_ref,
-        "reference_sample_count":   total_sample_count,
-        "reference_word_count":     total_word_count_ref,
-        "comparison_total":         len(results),
-        "comparison_success":       len(successful_results),
-        "comparison_error":         len(error_results),
-        "analyzed_phoneme_count":   analyzed_phonemes,
-        "outlier_count":            outlier_count,
-        "has_analysis_report":      analysis_report is not None,
-        "metadata":                 comparison_results.get("metadata", {}),
+        "reference_phoneme_count": phoneme_count_ref,
+        "reference_sample_count": total_sample_count,
+        "reference_word_count": total_word_count_ref,
+        "comparison_total": len(results),
+        "comparison_success": len(successful_results),
+        "comparison_error": len(error_results),
+        "analyzed_phoneme_count": analyzed_phonemes,
+        "outlier_count": outlier_count,
+        "has_analysis_report": analysis_report is not None,
+        "metadata": comparison_results.get("metadata", {}),
     }
 
 
@@ -544,88 +506,70 @@ def build_reference_quality_rows(reference_vectors: dict[str, Any]) -> list[dict
     """reference 음소별 품질 행 목록을 빌드한다."""
     rows = []
     for phoneme, vector in reference_vectors.items():
-        word_count      = len(vector.get("test_words", []))
-        sample_count    = vector.get("sample_count", 0)
-        duration_ms     = vector.get("duration_ms", 0.0)
-        duration_std    = vector.get("duration_std", 0.0)
-        rms_mean        = vector.get("rms_mean", 0.0)
-
+        word_count = len(vector.get("test_words", []))
+        sample_count = vector.get("sample_count", 0)
+        duration_ms = vector.get("duration_ms", 0.0)
+        duration_std = vector.get("duration_std", 0.0)
+        rms_mean = vector.get("rms_mean", 0.0)
         warnings = _compute_quality_warnings(sample_count, duration_ms, duration_std, rms_mean, word_count)
-
         rows.append({
-            "phoneme":                   phoneme,
-            "phoneme_type":              vector.get("phoneme_type", ""),
-            "sample_count":              sample_count,
-            "word_count":                word_count,
-            "duration_ms":               round(duration_ms, 2),
-            "duration_std":              round(duration_std, 2),
-            "zcr_mean":                  round(vector.get("zcr_mean", 0.0), 6),
-            "zcr_std":                   round(vector.get("zcr_std", 0.0), 6),
-            "rms_mean":                  round(rms_mean, 6),
-            "rms_std":                   round(vector.get("rms_std", 0.0), 6),
-            "spectral_centroid_mean":    round(vector.get("spectral_centroid_mean", 0.0), 2),
-            "spectral_centroid_std":     round(vector.get("spectral_centroid_std", 0.0), 2),
-            "quality_warning":           ", ".join(warnings) if warnings else "",
-            "test_words":                vector.get("test_words", []),
-            "korean_pronunciations":     vector.get("korean_pronunciations", {}),
+            "phoneme": phoneme,
+            "phoneme_type": vector.get("phoneme_type", ""),
+            "sample_count": sample_count,
+            "word_count": word_count,
+            "duration_ms": round(duration_ms, 2),
+            "duration_std": round(duration_std, 2),
+            "zcr_mean": round(vector.get("zcr_mean", 0.0), 6),
+            "zcr_std": round(vector.get("zcr_std", 0.0), 6),
+            "rms_mean": round(rms_mean, 6),
+            "rms_std": round(vector.get("rms_std", 0.0), 6),
+            "spectral_centroid_mean": round(vector.get("spectral_centroid_mean", 0.0), 2),
+            "spectral_centroid_std": round(vector.get("spectral_centroid_std", 0.0), 2),
+            "quality_warning": ", ".join(warnings) if warnings else "",
+            "test_words": vector.get("test_words", []),
+            "korean_pronunciations": vector.get("korean_pronunciations", {}),
         })
     return sorted(rows, key=lambda r: r["phoneme"])
 
 
-def build_phoneme_analysis_rows(
-    comparison_results: dict[str, Any],
-    analysis_report: dict[str, Any] | None,
-) -> list[dict[str, Any]]:
+def build_phoneme_analysis_rows(comparison_results: dict[str, Any], analysis_report: dict[str, Any] | None) -> list[dict[str, Any]]:
     """음소별 비교 분석 행 목록을 빌드한다."""
-    successful_results = [
-        r for r in comparison_results.get("results", [])
-        if is_success_row(r)
-    ]
-
+    successful_results = [r for r in comparison_results.get("results", []) if is_success_row(r)]
     if not successful_results:
         return []
-
     phoneme_groups: dict[str, list[dict[str, Any]]] = {}
     for row in successful_results:
         phoneme = row.get("phoneme", "")
         phoneme_groups.setdefault(phoneme, []).append(row)
-
     report_by_phoneme = _index_report_by_phoneme(analysis_report)
-
-    rows = []
-    for phoneme, group in sorted(phoneme_groups.items()):
-        row = _build_single_phoneme_analysis(phoneme, group, report_by_phoneme.get(phoneme))
-        rows.append(row)
-
-    return rows
+    return [_build_single_phoneme_analysis(phoneme, group, report_by_phoneme.get(phoneme)) for phoneme, group in sorted(phoneme_groups.items())]
 
 
 def build_word_result_rows(comparison_results: dict[str, Any]) -> list[dict[str, Any]]:
     """단어별 성공 comparison 행 목록을 빌드한다."""
     results = comparison_results.get("results", [])
     successful = [r for r in results if is_success_row(r)]
-
     return [
         {
-            "word":                           r.get("word", ""),
-            "korean_pronunciation":           r.get("korean_pronunciation", ""),
-            "phoneme":                        r.get("phoneme", ""),
-            "en_duration_ms":                 _round_or_none(r.get("en_duration_ms")),
-            "ko_duration_ms":                 _round_or_none(r.get("ko_duration_ms")),
-            "duration_ko_en_ratio":           _round_or_none(r.get("duration_ko_en_ratio")),
-            "en_zcr_mean":                    _round_or_none(r.get("en_zcr_mean"), ndigits=6),
-            "ko_zcr_mean":                    _round_or_none(r.get("ko_zcr_mean"), ndigits=6),
-            "zcr_ko_en_ratio":                _round_or_none(r.get("zcr_ko_en_ratio")),
-            "en_rms_mean":                    _round_or_none(r.get("en_rms_mean"), ndigits=6),
-            "ko_rms_mean":                    _round_or_none(r.get("ko_rms_mean"), ndigits=6),
-            "rms_ko_en_ratio":                _round_or_none(r.get("rms_ko_en_ratio")),
-            "en_spectral_centroid_mean":      _round_or_none(r.get("en_spectral_centroid_mean")),
-            "ko_spectral_centroid_mean":      _round_or_none(r.get("ko_spectral_centroid_mean")),
-            "spectral_centroid_ko_en_ratio":  _round_or_none(r.get("spectral_centroid_ko_en_ratio")),
-            "mfcc_distance":                  _round_or_none(r.get("mfcc_distance")),
-            "mfcc_cosine_distance":           _round_or_none(r.get("mfcc_cosine_distance"), ndigits=4),
-            "en_audio_path":                  r.get("en_audio_path", ""),
-            "ko_audio_path":                  r.get("ko_audio_path", ""),
+            "word": r.get("word", ""),
+            "korean_pronunciation": r.get("korean_pronunciation", ""),
+            "phoneme": r.get("phoneme", ""),
+            "en_duration_ms": _round_or_none(r.get("en_duration_ms")),
+            "ko_duration_ms": _round_or_none(r.get("ko_duration_ms")),
+            "duration_ko_en_ratio": _round_or_none(r.get("duration_ko_en_ratio")),
+            "en_zcr_mean": _round_or_none(r.get("en_zcr_mean"), ndigits=6),
+            "ko_zcr_mean": _round_or_none(r.get("ko_zcr_mean"), ndigits=6),
+            "zcr_ko_en_ratio": _round_or_none(r.get("zcr_ko_en_ratio")),
+            "en_rms_mean": _round_or_none(r.get("en_rms_mean"), ndigits=6),
+            "ko_rms_mean": _round_or_none(r.get("ko_rms_mean"), ndigits=6),
+            "rms_ko_en_ratio": _round_or_none(r.get("rms_ko_en_ratio")),
+            "en_spectral_centroid_mean": _round_or_none(r.get("en_spectral_centroid_mean")),
+            "ko_spectral_centroid_mean": _round_or_none(r.get("ko_spectral_centroid_mean")),
+            "spectral_centroid_ko_en_ratio": _round_or_none(r.get("spectral_centroid_ko_en_ratio")),
+            "mfcc_distance": _round_or_none(r.get("mfcc_distance")),
+            "mfcc_cosine_distance": _round_or_none(r.get("mfcc_cosine_distance"), ndigits=4),
+            "en_audio_path": r.get("en_audio_path", ""),
+            "ko_audio_path": r.get("ko_audio_path", ""),
         }
         for r in successful
     ]
@@ -635,26 +579,23 @@ def build_outlier_rows(analysis_report: dict[str, Any] | None) -> list[dict[str,
     """outlier 후보 행 목록을 빌드한다. analysis_report가 없으면 빈 리스트."""
     if not analysis_report:
         return []
-
     phoneme_reports = analysis_report.get("phonemes", {})
     if not isinstance(phoneme_reports, dict):
         return []
-
     rows = []
     for phoneme, report in phoneme_reports.items():
         if not isinstance(report, dict):
             continue
         for outlier in report.get("outliers", []):
             rows.append({
-                "word":        outlier.get("word", ""),
-                "phoneme":     outlier.get("phoneme", phoneme),
+                "word": outlier.get("word", ""),
+                "phoneme": outlier.get("phoneme", phoneme),
                 "metric_name": outlier.get("metric_name", ""),
-                "value":       _round_or_none(outlier.get("value")),
-                "average":     _round_or_none(outlier.get("average")),
-                "stdev":       _round_or_none(outlier.get("stdev")),
-                "z_score":     _round_or_none(outlier.get("z_score"), ndigits=3),
+                "value": _round_or_none(outlier.get("value")),
+                "average": _round_or_none(outlier.get("average")),
+                "stdev": _round_or_none(outlier.get("stdev")),
+                "z_score": _round_or_none(outlier.get("z_score"), ndigits=3),
             })
-
     return sorted(rows, key=lambda r: abs(r.get("z_score") or 0), reverse=True)
 
 
@@ -663,12 +604,12 @@ def build_error_rows(comparison_results: dict[str, Any]) -> list[dict[str, Any]]
     results = comparison_results.get("results", [])
     return [
         {
-            "word":               r.get("word", ""),
+            "word": r.get("word", ""),
             "korean_pronunciation": r.get("korean_pronunciation", ""),
-            "phoneme":            r.get("phoneme", ""),
-            "error_message":      r.get("error_message", ""),
-            "en_audio_exists":    r.get("en_audio_exists", False),
-            "ko_audio_exists":    r.get("ko_audio_exists", False),
+            "phoneme": r.get("phoneme", ""),
+            "error_message": r.get("error_message", ""),
+            "en_audio_exists": r.get("en_audio_exists", False),
+            "ko_audio_exists": r.get("ko_audio_exists", False),
         }
         for r in results
         if r.get("status") == "error"
@@ -677,13 +618,7 @@ def build_error_rows(comparison_results: dict[str, Any]) -> list[dict[str, Any]]
 
 # ── 내부 헬퍼 ────────────────────────────────────────────────────────────────
 
-def _compute_quality_warnings(
-    sample_count: int,
-    duration_ms: float,
-    duration_std: float,
-    rms_mean: float,
-    word_count: int,
-) -> list[str]:
+def _compute_quality_warnings(sample_count: int, duration_ms: float, duration_std: float, rms_mean: float, word_count: int) -> list[str]:
     warnings: list[str] = []
     if sample_count < 10:
         warnings.append("sample_count 부족")
@@ -702,62 +637,48 @@ def _count_outliers_from_report(analysis_report: dict[str, Any] | None) -> int:
     phoneme_reports = analysis_report.get("phonemes", {})
     if not isinstance(phoneme_reports, dict):
         return 0
-    return sum(
-        len(report.get("outliers", []))
-        for report in phoneme_reports.values()
-        if isinstance(report, dict)
-    )
+    return sum(len(report.get("outliers", [])) for report in phoneme_reports.values() if isinstance(report, dict))
 
 
-def _index_report_by_phoneme(
-    analysis_report: dict[str, Any] | None,
-) -> dict[str, dict[str, Any]]:
+def _index_report_by_phoneme(analysis_report: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     if not analysis_report:
         return {}
-
     phoneme_data = analysis_report.get("phonemes")
     if isinstance(phoneme_data, dict):
         return phoneme_data
-
     legacy_data = analysis_report.get("phoneme_analysis")
     if isinstance(legacy_data, dict):
         return legacy_data
-
     return {}
 
 
-def _build_single_phoneme_analysis(
-    phoneme: str,
-    group: list[dict[str, Any]],
-    report_data: dict[str, Any] | None,
-) -> dict[str, Any]:
+def _build_single_phoneme_analysis(phoneme: str, group: list[dict[str, Any]], report_data: dict[str, Any] | None) -> dict[str, Any]:
     def avg(key: str) -> float | None:
         values = [r[key] for r in group if r.get(key) is not None]
         return round(sum(values) / len(values), 3) if values else None
 
     dominant_features = report_data.get("dominant_features", []) if report_data else []
-    outlier_count     = report_data.get("outlier_count", 0) if report_data else 0
-
+    outlier_count = report_data.get("outlier_count", 0) if report_data else 0
     return {
-        "phoneme":                          phoneme,
-        "word_count":                       len(group),
-        "dominant_features":                ", ".join(dominant_features) if dominant_features else "-",
-        "avg_mfcc_distance":                avg("mfcc_distance"),
-        "avg_mfcc_cosine_distance":         avg("mfcc_cosine_distance"),
-        "avg_duration_ko_en_ratio":         avg("duration_ko_en_ratio"),
-        "avg_zcr_ko_en_ratio":              avg("zcr_ko_en_ratio"),
-        "avg_rms_ko_en_ratio":              avg("rms_ko_en_ratio"),
+        "phoneme": phoneme,
+        "word_count": len(group),
+        "dominant_features": ", ".join(dominant_features) if dominant_features else "-",
+        "avg_mfcc_distance": avg("mfcc_distance"),
+        "avg_mfcc_cosine_distance": avg("mfcc_cosine_distance"),
+        "avg_duration_ko_en_ratio": avg("duration_ko_en_ratio"),
+        "avg_zcr_ko_en_ratio": avg("zcr_ko_en_ratio"),
+        "avg_rms_ko_en_ratio": avg("rms_ko_en_ratio"),
         "avg_spectral_centroid_ko_en_ratio": avg("spectral_centroid_ko_en_ratio"),
-        "outlier_count":                    outlier_count,
+        "outlier_count": outlier_count,
     }
 
 
 def _build_file_status() -> dict[str, bool]:
     return {
-        "reference_vectors":  REFERENCE_VECTORS_PATH.exists(),
+        "reference_vectors": REFERENCE_VECTORS_PATH.exists(),
         "comparison_results": COMPARISON_RESULTS_PATH.exists(),
-        "analysis_report":    ANALYSIS_REPORT_PATH.exists(),
-        "db":                 DB_PATH.exists(),
+        "analysis_report": ANALYSIS_REPORT_PATH.exists(),
+        "db": DB_PATH.exists(),
     }
 
 
