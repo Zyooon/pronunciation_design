@@ -38,6 +38,7 @@
     <button class="tab-btn" data-tab="phoneme">Phoneme Analysis</button>
     <button class="tab-btn" data-tab="words">Word Detail</button>
     <button class="tab-btn" data-tab="user">User Results</button>
+    <button class="tab-btn" data-tab="label-review">Label Review</button>
     <button class="tab-btn" data-tab="word-compare">Word Compare</button>
   </nav>
 
@@ -182,7 +183,31 @@
       </div>
     </section>
 
-    <!-- ── 6. Word Compare ── -->
+    <!-- ── 6. Label Review ── -->
+    <section id="tab-label-review" class="tab-panel">
+      <div class="panel-toolbar">
+        <h2 class="panel-title">Label Review</h2>
+        <span class="panel-hint">녹음 파일을 듣고 good / korean_like / wrong_or_noisy / exclude 라벨을 지정합니다.</span>
+        <div class="filter-row">
+          <label>라벨
+            <select id="label-review-filter">
+              <option value="">전체</option>
+              <option value="unlabeled" selected>unlabeled</option>
+              <option value="good">good</option>
+              <option value="korean_like">korean_like</option>
+              <option value="wrong_or_noisy">wrong_or_noisy</option>
+              <option value="exclude">exclude</option>
+            </select>
+          </label>
+          <button type="button" id="label-review-refresh" class="secondary-btn">새로고침</button>
+        </div>
+      </div>
+      <div id="label-review-wrap">
+        <div class="spinner-wrap"><div class="spinner"></div></div>
+      </div>
+    </section>
+
+    <!-- ── 7. Word Compare ── -->
     <section id="tab-word-compare" class="tab-panel">
       <div class="panel-toolbar">
         <h2 class="panel-title">Word Compare</h2>
@@ -202,5 +227,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <script src="{{ url_for('static', path='js/analysis_viewer.js') }}"></script>
+  <script src="{{ url_for('static', path='js/label_review.js') }}"></script>
 </body>
 </html>
