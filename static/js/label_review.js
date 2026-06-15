@@ -1,11 +1,12 @@
 const LABEL_REVIEW_PAGE_SIZE = 50;
 let _labelReviewPage = 1;
+let _labelReviewRowsById = new Map();
 
 // Label Review 탭 전용 스크립트
 // - 한 번에 50개씩 서버에서 조회
 // - 날짜는 초 단위까지만 표시
 // - 피드백은 표시하지 않고 검수에 필요한 핵심 정보만 표시
-// - 좁은 화면에서는 카드형으로 읽히도록 data-label 속성을 넣는다.
+// - 단어명을 누르면 Word Compare 탭에서 해당 row를 비교한다.
 document.addEventListener("DOMContentLoaded", () => {
   const filter = document.getElementById("label-review-filter");
   const refresh = document.getElementById("label-review-refresh");
@@ -36,6 +37,7 @@ async function loadLabelReviewRows(page = _labelReviewPage) {
     });
     const data = await labelReviewFetchJson(`/api/label-review-results?${params.toString()}`);
     _labelReviewPage = data.page || _labelReviewPage;
+    _labelReviewRowsById = new Map((data.rows || []).map((row) => [String(row.id), row]));
 
     if (!data.exists) {
       wrap.innerHTML = `<div class="no-data-msg">data/pronunciation.db 파일이 없습니다.</div>`;
@@ -85,6 +87,9 @@ async function loadLabelReviewRows(page = _labelReviewPage) {
     wrap.querySelectorAll("button[data-label]").forEach((btn) => {
       btn.addEventListener("click", () => updateReviewLabel(btn));
     });
+    wrap.querySelectorAll("button[data-compare-id]").forEach((btn) => {
+      btn.addEventListener("click", () => openCompareFromLabelReview(btn));
+    });
     bindLabelReviewPager(wrap, data);
   } catch (err) {
     wrap.innerHTML = `<div class="no-data-msg">${labelReviewEsc(err.message)}</div>`;
@@ -102,7 +107,11 @@ function renderLabelReviewRow(row) {
     <tr data-recording-id="${row.id}">
       <td class="num-cell" data-label="ID">${row.id}</td>
       <td data-label="날짜">${labelReviewEsc(formatLabelReviewDate(row.created_at))}</td>
-      <td data-label="단어"><strong>${labelReviewEsc(row.word || "")}</strong></td>
+      <td data-label="단어">
+        <button type="button" class="word-compare-link" data-compare-id="${row.id}" title="Word Compare에서 보기">
+          ${labelReviewEsc(row.word || "")}
+        </button>
+      </td>
       <td class="phoneme-cell" data-label="발음">/${labelReviewEsc(row.phoneme || "")}/</td>
       <td class="label-cell" data-label="현재 라벨">${renderLabelPill(label)}</td>
       <td class="num-cell" data-label="점수">${row.score ?? "—"}</td>
@@ -111,6 +120,20 @@ function renderLabelReviewRow(row) {
       <td data-label="라벨 지정">${renderLabelButtons(row.id)}</td>
     </tr>
   `;
+}
+
+function openCompareFromLabelReview(btn) {
+  const id = String(btn.dataset.compareId || "");
+  const row = _labelReviewRowsById.get(id);
+  if (!row) {
+    alert("해당 녹음 row를 찾을 수 없습니다. 새로고침 후 다시 시도해주세요.");
+    return;
+  }
+  if (typeof window.openWordCompareFromLabelReview !== "function") {
+    alert("Word Compare 연결 함수를 찾을 수 없습니다. 페이지를 새로고침해주세요.");
+    return;
+  }
+  window.openWordCompareFromLabelReview(row);
 }
 
 function renderLabelReviewPager(data) {
@@ -178,6 +201,8 @@ async function updateReviewLabel(btn) {
     const nextLabel = payload.test_label || "unlabeled";
     row.querySelector(".label-cell").innerHTML = renderLabelPill(nextLabel);
     row.classList.add("selected");
+    const cachedRow = _labelReviewRowsById.get(String(id));
+    if (cachedRow) cachedRow.test_label = payload.test_label;
     showLabelReviewMessage(`ID ${id} 라벨이 ${nextLabel}(으)로 저장됐습니다.`, "ok");
 
     const currentFilter = document.getElementById("label-review-filter")?.value || "";
