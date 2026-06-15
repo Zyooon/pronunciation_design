@@ -5,6 +5,7 @@
 (function () {
   const WORD_COMPARE_PLACEHOLDER = `<div class="no-data-msg">Label Review 탭에서 비교할 단어명을 선택하세요.</div>`;
   const CONSONANT_PHONEMES = new Set(["θ", "f", "v", "r", "l", "s", "z", "ʃ", "tʃ", "dʒ", "p", "b", "t", "d", "k", "g"]);
+  const LIQUID_PHONEMES = new Set(["r", "l"]);
   let referenceRows = [];
 
   const RAW_REFERENCE_METRICS = [
@@ -106,13 +107,15 @@
 
     wrap.innerHTML = `
       ${renderSummarySection(row, englishReference)}
-      ${renderEnglishReferenceSection(row, englishReference, rawMetrics, scoreMetrics, mfccDistance, onsetMetrics)}
+      ${renderEnglishReferenceSection(row, englishReference, rawMetrics, onsetMetrics)}
+      ${renderElevenLabsScoreSection(row, scoreMetrics, mfccDistance)}
       ${renderKoreanPatternSection(row, koreanMetrics)}
       ${!hasAnyMetric ? renderMissingMetricNotice() : ""}
     `;
 
     renderReferenceComparisonCharts(rawMetrics.filter((m) => m.userValue != null || m.refValue != null));
-    renderScoreChart("chart-en-reference-scores", scoreMetrics.filter((m) => m.value != null));
+    const { usedScores } = groupScoreMetrics(scoreMetrics, row.phoneme);
+    renderScoreChart("chart-en-reference-scores", usedScores);
     renderScoreChart("chart-ko-pattern", koreanMetrics.filter((m) => m.value != null), "korean");
   }
 
@@ -191,7 +194,7 @@
     `;
   }
 
-  function renderEnglishReferenceSection(row, englishReference, rawMetrics, scoreMetrics, mfccDistance, onsetMetrics) {
+  function renderEnglishReferenceSection(row, englishReference, rawMetrics, onsetMetrics) {
     const shouldShowOnset = isConsonantPhoneme(row.phoneme) && onsetMetrics.some((m) => m.value != null);
     return `
       <section class="word-compare-section">
@@ -209,7 +212,6 @@
         <div class="word-compare-group-grid">
           ${rawMetrics.map(renderRawReferenceCard).join("")}
         </div>
-        ${renderElevenLabsScoreSubsection(scoreMetrics, mfccDistance)}
         ${shouldShowOnset ? renderOnsetSection(onsetMetrics) : ""}
       </section>
     `;
@@ -245,25 +247,27 @@
     `;
   }
 
-  function renderElevenLabsScoreSubsection(scoreMetrics, mfccDistance) {
-    const usedScores = scoreMetrics.filter((m) => m.value != null);
-    const unusedScores = scoreMetrics.filter((m) => m.value == null);
+  function renderElevenLabsScoreSection(row, scoreMetrics, mfccDistance) {
+    const { usedScores, unusedScores, missingExpectedScores } = groupScoreMetrics(scoreMetrics, row.phoneme);
     const chartHeight = Math.max(160, usedScores.length * 60);
     return `
-      <div class="word-compare-section-head" style="margin-top:18px;">
-        <div>
-          <h3 style="font-size:14px;">ElevenLabs 기준 점수</h3>
-          <p>scorer가 ElevenLabs reference와 비교해 계산한 결과값입니다. score 계열은 0~100 점수(높을수록 좋음)입니다.</p>
+      <section class="word-compare-section">
+        <div class="word-compare-section-head">
+          <div>
+            <h3>ElevenLabs 기준 점수</h3>
+            <p>scorer가 ElevenLabs reference와 비교해 계산한 결과입니다. score 계열은 0~100점이며 높을수록 좋습니다.</p>
+          </div>
         </div>
-      </div>
-      ${renderMfccDistanceCard(mfccDistance)}
-      ${usedScores.length ? `
-        <div class="chart-box word-compare-chart-box">
-          <div class="chart-title">Score (0~100)</div>
-          <div class="chart-canvas-wrap" style="height:${chartHeight}px;"><canvas id="chart-en-reference-scores"></canvas></div>
-        </div>
-      ` : ""}
-      ${unusedScores.length ? renderUnusedScoresSection(unusedScores) : ""}
+        ${renderMfccDistanceCard(mfccDistance)}
+        ${usedScores.length ? `
+          <div class="chart-box word-compare-chart-box">
+            <div class="chart-title">Score (0~100)</div>
+            <div class="chart-canvas-wrap" style="height:${chartHeight}px;"><canvas id="chart-en-reference-scores"></canvas></div>
+          </div>
+        ` : ""}
+        ${unusedScores.length ? renderUnusedScoresSection(unusedScores) : ""}
+        ${missingExpectedScores.length ? renderMissingExpectedScoresSection(missingExpectedScores) : ""}
+      </section>
     `;
   }
 
@@ -285,6 +289,17 @@
         <strong>사용하지 않은 지표</strong>
         <ul style="margin:6px 0 0 0;padding-left:18px;font-size:12px;line-height:1.8;">
           ${unusedScores.map((m) => `<li>${escHtml(m.label)}: 이 음소 scoring recipe에서 사용하지 않음</li>`).join("")}
+        </ul>
+      </div>
+    `;
+  }
+
+  function renderMissingExpectedScoresSection(missingExpectedScores) {
+    return `
+      <div class="meta-box" style="margin-top:10px;border-color:#fde68a;background:#fffbeb;color:#92400e;">
+        <strong>계산 누락 가능 지표</strong>
+        <ul style="margin:6px 0 0 0;padding-left:18px;font-size:12px;line-height:1.8;">
+          ${missingExpectedScores.map((m) => `<li>${escHtml(m.label)}: 이 음소 recipe상 사용 대상이지만 row/details_json에 값이 없음</li>`).join("")}
         </ul>
       </div>
     `;
@@ -407,6 +422,24 @@
         plugins: { legend: { display: false } },
       },
     });
+  }
+
+  function getExpectedScoreKeys(phoneme) {
+    if (LIQUID_PHONEMES.has(String(phoneme || ""))) {
+      return new Set(["mfcc_score", "duration_score", "zcr_score", "spectral_centroid_score"]);
+    }
+    if (CONSONANT_PHONEMES.has(String(phoneme || ""))) {
+      return new Set(["mfcc_score", "zcr_score", "spectral_centroid_score"]);
+    }
+    return new Set(["mfcc_score", "duration_score", "rms_score", "spectral_centroid_score"]);
+  }
+
+  function groupScoreMetrics(scoreMetrics, phoneme) {
+    const expectedKeys = getExpectedScoreKeys(phoneme);
+    const usedScores = scoreMetrics.filter((m) => expectedKeys.has(m.key) && m.value != null);
+    const unusedScores = scoreMetrics.filter((m) => !expectedKeys.has(m.key));
+    const missingExpectedScores = scoreMetrics.filter((m) => expectedKeys.has(m.key) && m.value == null);
+    return { usedScores, unusedScores, missingExpectedScores };
   }
 
   function isConsonantPhoneme(phoneme) {
