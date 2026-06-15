@@ -65,6 +65,7 @@ async function loadLabelReviewRows(page = _labelReviewPage) {
         &nbsp;·&nbsp; <strong>필터:</strong> ${labelReviewEsc(filter.value || "전체")}
       </div>
       ${renderLabelReviewPager(data)}
+      <div id="label-review-message" class="meta-box" style="display:none;margin-bottom:12px;"></div>
       <div class="table-wrap label-review-table-wrap">
         <table class="data-table label-review-table" id="label-review-table">
           <thead>
@@ -170,19 +171,21 @@ async function updateReviewLabel(btn) {
   const originalText = btn.textContent;
   btn.disabled = true;
   btn.textContent = "저장 중";
+  clearLabelReviewMessage();
 
   try {
-    const res = await fetch(`/api/user-label/${id}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ test_label: label }),
-    });
-    if (!res.ok) throw new Error(`라벨 저장 실패 — HTTP ${res.status}`);
-    const payload = await res.json();
+    const payload = await postReviewLabel(id, label);
     const nextLabel = payload.test_label || "unlabeled";
     row.querySelector(".label-cell").innerHTML = renderLabelPill(nextLabel);
     row.classList.add("selected");
+    showLabelReviewMessage(`ID ${id} 라벨이 ${nextLabel}(으)로 저장됐습니다.`, "ok");
+
+    const currentFilter = document.getElementById("label-review-filter")?.value || "";
+    if (currentFilter && currentFilter !== nextLabel) {
+      setTimeout(() => loadLabelReviewRows(_labelReviewPage), 350);
+    }
   } catch (err) {
+    showLabelReviewMessage(err.message, "error");
     alert(err.message);
   } finally {
     btn.disabled = false;
@@ -190,10 +193,49 @@ async function updateReviewLabel(btn) {
   }
 }
 
+async function postReviewLabel(id, label) {
+  const res = await fetch(`/api/user-label/${id}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ test_label: label }),
+  });
+  let payload = null;
+  try {
+    payload = await res.json();
+  } catch (_) {
+    payload = null;
+  }
+  if (!res.ok) {
+    const detail = payload?.detail || payload?.error || `HTTP ${res.status}`;
+    throw new Error(`라벨 저장 실패: ${detail}`);
+  }
+  if (!payload?.ok) {
+    throw new Error("라벨 저장 실패: 서버 응답이 올바르지 않습니다.");
+  }
+  return payload;
+}
+
 async function labelReviewFetchJson(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url} — HTTP ${res.status}`);
   return res.json();
+}
+
+function showLabelReviewMessage(message, type = "ok") {
+  const box = document.getElementById("label-review-message");
+  if (!box) return;
+  box.style.display = "block";
+  box.style.borderColor = type === "error" ? "#fecaca" : "#bbf7d0";
+  box.style.color = type === "error" ? "#991b1b" : "#065f46";
+  box.style.background = type === "error" ? "#fef2f2" : "#f0fdf4";
+  box.textContent = message;
+}
+
+function clearLabelReviewMessage() {
+  const box = document.getElementById("label-review-message");
+  if (!box) return;
+  box.style.display = "none";
+  box.textContent = "";
 }
 
 function formatLabelReviewDate(value) {
