@@ -86,15 +86,36 @@ def _round_sub_scores(**values: float) -> dict[str, float]:
     return {key: round(float(value), 1) for key, value in values.items()}
 
 
+def _get_korean_pattern_status(en_distance: float, ko_distance: float, relative_distance_score: float) -> str:
+    if ko_distance < en_distance:
+        return "korean_like"
+    if relative_distance_score < _KO_RELATIVE_PENALTY_START:
+        return "borderline_korean_like"
+    return "english_like"
+
+
+def _get_korean_pattern_diagnosis(status: str) -> str:
+    if status == "korean_like":
+        return "영어 reference보다 한국어식 reference에 더 가까운 경향이 있습니다."
+    if status == "borderline_korean_like":
+        return "영어 reference에 더 가깝지만 한국어식 패턴도 일부 감지됩니다."
+    return "한국어식 reference보다 영어 reference에 더 가까운 경향입니다."
+
+
 def compute_ko_reference_metrics(
     user_features: AudioFeatures,
     en_reference: ReferenceVector,
     ko_reference: ReferenceVector | None,
-) -> dict[str, float]:
+) -> dict[str, ScoreDetailValue]:
+    """한국어식 reference는 점수로 더하지 않고 penalty 트랩으로만 사용한다."""
     en_distance = _mfcc_distance(user_features, en_reference)
     ko_distance = _mfcc_distance(user_features, ko_reference)
     if en_distance is None or ko_distance is None:
-        return {}
+        return {
+            "korean_pattern_status": "unavailable",
+            "korean_pattern_penalty_policy": "penalty_only",
+            "korean_pattern_diagnosis": "한국어식 reference 비교를 계산할 수 없습니다.",
+        }
 
     relative_distance_score = ko_distance / (en_distance + ko_distance + EPSILON) * 100
     korean_like_penalty = max(
@@ -105,11 +126,20 @@ def compute_ko_reference_metrics(
         korean_like_penalty += 3.0
     korean_like_penalty = float(np.clip(korean_like_penalty, 0.0, _KO_RELATIVE_PENALTY_MAX))
 
+    status = _get_korean_pattern_status(en_distance, ko_distance, float(relative_distance_score))
+    is_korean_reference_closer = ko_distance < en_distance
+
     return {
         "en_distance": round(en_distance, 4),
         "ko_distance": round(ko_distance, 4),
+        "ko_minus_en_distance": round(ko_distance - en_distance, 4),
         "relative_distance_score": round(float(relative_distance_score), 1),
         "korean_like_penalty": round(korean_like_penalty, 1),
+        "korean_pattern_status": status,
+        "korean_pattern_is_closer": is_korean_reference_closer,
+        "korean_pattern_penalty_applied": korean_like_penalty > 0.0,
+        "korean_pattern_penalty_policy": "penalty_only",
+        "korean_pattern_diagnosis": _get_korean_pattern_diagnosis(status),
     }
 
 
@@ -336,9 +366,13 @@ def _get_ko_metrics(
     user_features: AudioFeatures,
     reference: ReferenceVector,
     ko_reference: ReferenceVector | None,
-) -> dict[str, float]:
+) -> dict[str, ScoreDetailValue]:
     if phoneme not in _KO_REFERENCE_PHONEMES:
-        return {}
+        return {
+            "korean_pattern_status": "not_applicable",
+            "korean_pattern_penalty_policy": "penalty_only",
+            "korean_pattern_diagnosis": "이 음소는 한국어식 reference penalty 대상이 아닙니다.",
+        }
     return compute_ko_reference_metrics(user_features, reference, ko_reference)
 
 
@@ -379,7 +413,7 @@ def score_pronunciation(
     ko_metrics = _get_ko_metrics(phoneme, user_features, reference, ko_reference)
     liquid_alt_metrics = _get_liquid_metrics(phoneme, user_features, reference, liquid_alt_reference)
 
-    korean_like_penalty = ko_metrics.get("korean_like_penalty", 0.0)
+    korean_like_penalty = float(ko_metrics.get("korean_like_penalty") or 0.0)
     liquid_alt_penalty = liquid_alt_metrics.get("liquid_alt_penalty", 0.0)
     total_penalty = pronunciation_penalty + korean_like_penalty + liquid_alt_penalty
 
