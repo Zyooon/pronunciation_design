@@ -15,7 +15,6 @@
   ];
 
   const SCORE_METRICS = [
-    ["mfcc_distance", "MFCC distance", "낮을수록 ElevenLabs reference와 가깝습니다.", "lower"],
     ["mfcc_score", "MFCC score", "높을수록 음색/입 모양이 reference와 가깝습니다.", "higher"],
     ["duration_score", "Duration score", "높을수록 길이가 reference와 가깝습니다.", "higher"],
     ["zcr_score", "ZCR score", "높을수록 자음 명확성이 reference와 가깝습니다.", "higher"],
@@ -100,13 +99,14 @@
 
     const rawMetrics = collectRawReferenceMetrics(row, englishReference);
     const scoreMetrics = collectScoreMetrics(row);
+    const mfccDistance = collectMfccDistance(row);
     const onsetMetrics = collectOnsetMetrics(row);
     const koreanMetrics = collectKoreanPatternMetrics(row);
-    const hasAnyMetric = [...rawMetrics, ...scoreMetrics, ...onsetMetrics, ...koreanMetrics].some((m) => m.userValue != null || m.value != null);
+    const hasAnyMetric = [...rawMetrics, ...scoreMetrics, ...onsetMetrics, ...koreanMetrics].some((m) => m.userValue != null || m.value != null) || mfccDistance.value != null;
 
     wrap.innerHTML = `
       ${renderSummarySection(row, englishReference)}
-      ${renderEnglishReferenceSection(row, englishReference, rawMetrics, scoreMetrics, onsetMetrics)}
+      ${renderEnglishReferenceSection(row, englishReference, rawMetrics, scoreMetrics, mfccDistance, onsetMetrics)}
       ${renderKoreanPatternSection(row, koreanMetrics)}
       ${!hasAnyMetric ? renderMissingMetricNotice() : ""}
     `;
@@ -133,6 +133,16 @@
       goodDirection,
       value: numOrNull(row[key]),
     }));
+  }
+
+  function collectMfccDistance(row) {
+    return {
+      key: "mfcc_distance",
+      label: "MFCC distance",
+      description: "현재 녹음과 ElevenLabs reference 사이 거리",
+      goodDirection: "lower",
+      value: numOrNull(row["mfcc_distance"]),
+    };
   }
 
   function collectOnsetMetrics(row) {
@@ -181,7 +191,7 @@
     `;
   }
 
-  function renderEnglishReferenceSection(row, englishReference, rawMetrics, scoreMetrics, onsetMetrics) {
+  function renderEnglishReferenceSection(row, englishReference, rawMetrics, scoreMetrics, mfccDistance, onsetMetrics) {
     const shouldShowOnset = isConsonantPhoneme(row.phoneme) && onsetMetrics.some((m) => m.value != null);
     return `
       <section class="word-compare-section">
@@ -199,19 +209,7 @@
         <div class="word-compare-group-grid">
           ${rawMetrics.map(renderRawReferenceCard).join("")}
         </div>
-        <div class="word-compare-section-head" style="margin-top:18px;">
-          <div>
-            <h3 style="font-size:14px;">Reference 기반 점수/거리</h3>
-            <p>MFCC distance는 낮을수록 좋고, score 계열은 높을수록 좋습니다.</p>
-          </div>
-        </div>
-        <div class="word-compare-group-grid">
-          ${scoreMetrics.map(renderScoreMetricCard).join("")}
-        </div>
-        <div class="chart-box word-compare-chart-box">
-          <div class="chart-title">Reference-derived scores and distance</div>
-          <div class="chart-canvas-wrap" style="height:320px;"><canvas id="chart-en-reference-scores"></canvas></div>
-        </div>
+        ${renderElevenLabsScoreSubsection(scoreMetrics, mfccDistance)}
         ${shouldShowOnset ? renderOnsetSection(onsetMetrics) : ""}
       </section>
     `;
@@ -243,6 +241,51 @@
         <div class="word-compare-card-title">${escHtml(metric.label)} <span>${escHtml(metric.description)}</span></div>
         <div class="word-compare-korean-value" style="color:${metric.goodDirection === "lower" ? "#1677c7" : "#10b981"};">${formatValue(metric.value)}</div>
         <p style="color:#6b7c8f;font-size:12px;line-height:1.6;">${escHtml(directionText(metric.goodDirection))}</p>
+      </div>
+    `;
+  }
+
+  function renderElevenLabsScoreSubsection(scoreMetrics, mfccDistance) {
+    const usedScores = scoreMetrics.filter((m) => m.value != null);
+    const unusedScores = scoreMetrics.filter((m) => m.value == null);
+    const chartHeight = Math.max(160, usedScores.length * 60);
+    return `
+      <div class="word-compare-section-head" style="margin-top:18px;">
+        <div>
+          <h3 style="font-size:14px;">ElevenLabs 기준 점수</h3>
+          <p>scorer가 ElevenLabs reference와 비교해 계산한 결과값입니다. score 계열은 0~100 점수(높을수록 좋음)입니다.</p>
+        </div>
+      </div>
+      ${renderMfccDistanceCard(mfccDistance)}
+      ${usedScores.length ? `
+        <div class="chart-box word-compare-chart-box">
+          <div class="chart-title">Score (0~100)</div>
+          <div class="chart-canvas-wrap" style="height:${chartHeight}px;"><canvas id="chart-en-reference-scores"></canvas></div>
+        </div>
+      ` : ""}
+      ${unusedScores.length ? renderUnusedScoresSection(unusedScores) : ""}
+    `;
+  }
+
+  function renderMfccDistanceCard(mfccDistance) {
+    return `
+      <div class="word-compare-group-grid" style="margin-bottom:12px;">
+        <div class="word-compare-card english">
+          <div class="word-compare-card-title">MFCC distance <span>현재 녹음과 ElevenLabs reference 사이 거리</span></div>
+          <div class="word-compare-korean-value" style="color:#1677c7;">${formatValue(mfccDistance.value)}</div>
+          <p style="color:#6b7c8f;font-size:12px;line-height:1.6;">낮을수록 좋음</p>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderUnusedScoresSection(unusedScores) {
+    return `
+      <div class="meta-box" style="margin-top:10px;border-color:#e2e8f0;background:#f8fafc;color:#64748b;">
+        <strong>사용하지 않은 지표</strong>
+        <ul style="margin:6px 0 0 0;padding-left:18px;font-size:12px;line-height:1.8;">
+          ${unusedScores.map((m) => `<li>${escHtml(m.label)}: 이 음소 scoring recipe에서 사용하지 않음</li>`).join("")}
+        </ul>
       </div>
     `;
   }
