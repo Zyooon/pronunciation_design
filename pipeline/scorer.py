@@ -14,6 +14,7 @@ ScoreDetailValue = float | str | list[str] | bool | None
 _LIQUID_PHONEMES: frozenset[str] = frozenset({"r", "l"})
 _DURATION_FOCUSED_PHONEMES: frozenset[str] = frozenset({"i", "iː"})
 _KO_REFERENCE_PHONEMES: frozenset[str] = frozenset({"θ", "v", "æ", "f"})
+_SCHWA_PHONEMES: frozenset[str] = frozenset({"ə"})
 
 _MFCC_LOW_THRESHOLD = 55.0
 _DURATION_LOW_THRESHOLD = 45.0
@@ -30,10 +31,17 @@ _ZCR_SCORE_TOLERANCE = 0.55
 _ZCR_SCORE_STEEPNESS = 4.0
 _ZCR_OVERSHOOT_PENALTY_SCALE = 0.3
 
-_KO_RELATIVE_PENALTY_START = 55.0
-_KO_RELATIVE_PENALTY_STRONG = 48.0
+_KO_RELATIVE_PENALTY_START = 62.0
+_KO_RELATIVE_PENALTY_STRONG = 52.0
 _KO_RELATIVE_PENALTY_MULTIPLIER = 0.8
 _KO_RELATIVE_PENALTY_MAX = 15.0
+
+_SCHWA_DURATION_RATIO_START = 1.25
+_SCHWA_RMS_RATIO_START = 1.35
+_SCHWA_DURATION_PENALTY_MULTIPLIER = 6.0
+_SCHWA_RMS_PENALTY_MULTIPLIER = 5.0
+_SCHWA_COMBINED_OVERSTRESS_BONUS = 2.0
+_SCHWA_OVERSTRESS_PENALTY_MAX = 10.0
 
 _LIQUID_ALT_SCORE_START = 53.0
 _LIQUID_ALT_SCORE_STRONG = 46.0
@@ -178,6 +186,49 @@ def compute_ko_reference_metrics(
         "korean_pattern_penalty_applied": korean_like_penalty > 0.0,
         "korean_pattern_penalty_policy": "penalty_only",
         "korean_pattern_diagnosis": _get_korean_pattern_diagnosis(status),
+    }
+
+
+def compute_schwa_overstress_metrics(
+    user_features: AudioFeatures,
+    reference: ReferenceVector,
+    phoneme: str,
+) -> dict[str, ScoreDetailValue]:
+    """/ə/는 약하게 지나가야 하므로 길이와 에너지가 과하면 penalty만 적용한다."""
+    if phoneme not in _SCHWA_PHONEMES:
+        return {
+            "schwa_overstress_status": "not_applicable",
+            "schwa_overstress_penalty": 0.0,
+        }
+
+    duration_ms = float(user_features.get("duration_ms", 0.0))
+    ref_duration_ms = float(reference.get("duration_ms", 0.0))
+    rms_mean = float(user_features.get("rms_mean", 0.0))
+    ref_rms_mean = float(reference.get("rms_mean", 0.0))
+
+    duration_ratio = duration_ms / (ref_duration_ms + EPSILON)
+    rms_ratio = (max(rms_mean, 0.0) + _RMS_SCORE_FLOOR) / (max(ref_rms_mean, 0.0) + _RMS_SCORE_FLOOR)
+    rms_log_ratio = float(np.log(rms_ratio))
+
+    duration_excess = max(0.0, duration_ratio - _SCHWA_DURATION_RATIO_START)
+    rms_excess = max(0.0, rms_log_ratio - float(np.log(_SCHWA_RMS_RATIO_START)))
+
+    duration_penalty = duration_excess * _SCHWA_DURATION_PENALTY_MULTIPLIER
+    rms_penalty = rms_excess * _SCHWA_RMS_PENALTY_MULTIPLIER
+    combined_bonus = _SCHWA_COMBINED_OVERSTRESS_BONUS if duration_penalty > 0.0 and rms_penalty > 0.0 else 0.0
+    penalty = float(np.clip(duration_penalty + rms_penalty + combined_bonus, 0.0, _SCHWA_OVERSTRESS_PENALTY_MAX))
+
+    status = "overstressed" if penalty > 0.0 else "ok"
+    return {
+        "schwa_overstress_status": status,
+        "schwa_duration_ratio": round(duration_ratio, 3),
+        "schwa_rms_ratio": round(rms_ratio, 3),
+        "schwa_rms_log_ratio": round(rms_log_ratio, 3),
+        "schwa_duration_excess": round(duration_excess, 3),
+        "schwa_rms_excess": round(rms_excess, 3),
+        "schwa_duration_penalty": round(duration_penalty, 1),
+        "schwa_rms_penalty": round(rms_penalty, 1),
+        "schwa_overstress_penalty": round(penalty, 1),
     }
 
 
@@ -450,10 +501,12 @@ def score_pronunciation(
     pronunciation_penalty = compute_pronunciation_penalty(sub_scores, phoneme_type)
     ko_metrics = _get_ko_metrics(phoneme, user_features, reference, ko_reference)
     liquid_alt_metrics = _get_liquid_metrics(phoneme, user_features, reference, liquid_alt_reference)
+    schwa_metrics = compute_schwa_overstress_metrics(user_features, reference, phoneme)
 
     korean_like_penalty = float(ko_metrics.get("korean_like_penalty") or 0.0)
     liquid_alt_penalty = liquid_alt_metrics.get("liquid_alt_penalty", 0.0)
-    total_penalty = pronunciation_penalty + korean_like_penalty + liquid_alt_penalty
+    schwa_overstress_penalty = float(schwa_metrics.get("schwa_overstress_penalty") or 0.0)
+    total_penalty = pronunciation_penalty + korean_like_penalty + liquid_alt_penalty + schwa_overstress_penalty
 
     duration_ratio = duration_ms / (ref_duration_ms + EPSILON)
     final_score = float(np.clip(base_score - total_penalty, 0.0, 100.0))
@@ -463,12 +516,14 @@ def score_pronunciation(
         **sub_scores,
         **ko_metrics,
         **liquid_alt_metrics,
+        **schwa_metrics,
         **_get_quality_detail_fields(quality_result),
         "base_score": round(base_score, 1),
         "quality_penalty": 0.0,
         "pronunciation_penalty": pronunciation_penalty,
         "korean_like_penalty": round(korean_like_penalty, 1),
         "liquid_alt_penalty": round(liquid_alt_penalty, 1),
+        "schwa_overstress_penalty": round(schwa_overstress_penalty, 1),
         "mismatch_penalty": 0.0,
         "total_penalty": round(total_penalty, 1),
         "final_score": round(final_score, 1),
