@@ -297,13 +297,16 @@ def compute_liquid_onset_metrics(
         }
 
     relative_score = alt_distance / (target_distance + alt_distance + EPSILON) * 100
-    penalty = max(
-        0.0,
-        (_LIQUID_ONSET_SCORE_START - relative_score) * _LIQUID_ONSET_PENALTY_MULTIPLIER,
-    )
-    if relative_score < _LIQUID_ONSET_SCORE_STRONG:
-        penalty += 2.0
-    penalty = float(np.clip(penalty, 0.0, _LIQUID_ONSET_PENALTY_MAX))
+    if _LIQUID_ONSET_PENALTY_MULTIPLIER <= 0.0:
+        penalty = 0.0
+    else:
+        penalty = max(
+            0.0,
+            (_LIQUID_ONSET_SCORE_START - relative_score) * _LIQUID_ONSET_PENALTY_MULTIPLIER,
+        )
+        if relative_score < _LIQUID_ONSET_SCORE_STRONG:
+            penalty += 2.0
+        penalty = float(np.clip(penalty, 0.0, _LIQUID_ONSET_PENALTY_MAX))
 
     status = "korean_like" if alt_distance < target_distance else "english_like"
     if penalty > 0.0 and status == "english_like":
@@ -380,11 +383,17 @@ def score_liquid(user_features: AudioFeatures, reference: ReferenceVector) -> di
     )
 
 
-def compute_pronunciation_penalty(sub_scores: dict[str, float], phoneme_type: str) -> float:
+def compute_pronunciation_penalty(sub_scores: dict[str, float], phoneme_type: str, phoneme: str) -> float:
     mfcc_score = sub_scores.get("mfcc_score", 100.0)
     duration_score = sub_scores.get("duration_score", 100.0)
     centroid_score = sub_scores.get("spectral_centroid_score", 100.0)
     zcr_score = sub_scores.get("zcr_score", 100.0)
+
+    if phoneme in _LIQUID_PHONEMES:
+        penalty = 0.0
+        if mfcc_score < _MFCC_LOW_THRESHOLD:
+            penalty += 5.0
+        return round(float(penalty), 1)
 
     penalty = 0.0
     if mfcc_score < _MFCC_LOW_THRESHOLD:
@@ -532,10 +541,12 @@ def _get_liquid_metrics(
 ) -> dict[str, ScoreDetailValue]:
     if phoneme not in _LIQUID_PHONEMES:
         return {}
-    return {
+    metrics = {
         **compute_liquid_alt_metrics(user_features, reference, liquid_alt_reference),
         **compute_liquid_onset_metrics(user_features, reference, liquid_alt_reference, phoneme),
     }
+    metrics["liquid_penalty_policy"] = "diagnostic_only"
+    return metrics
 
 
 def score_pronunciation(
@@ -560,7 +571,7 @@ def score_pronunciation(
     spectral_centroid_mean = float(user_features.get("spectral_centroid_mean", 0))
     ref_duration_ms = float(reference.get("duration_ms", 500))
 
-    pronunciation_penalty = compute_pronunciation_penalty(sub_scores, phoneme_type)
+    pronunciation_penalty = compute_pronunciation_penalty(sub_scores, phoneme_type, phoneme)
     ko_metrics = _get_ko_metrics(phoneme, user_features, reference, ko_reference)
     liquid_alt_metrics = _get_liquid_metrics(phoneme, user_features, reference, liquid_alt_reference)
     schwa_metrics = compute_schwa_overstress_metrics(user_features, reference, phoneme)
@@ -569,7 +580,10 @@ def score_pronunciation(
     liquid_alt_penalty = float(liquid_alt_metrics.get("liquid_alt_penalty") or 0.0)
     liquid_onset_penalty = float(liquid_alt_metrics.get("liquid_onset_penalty") or 0.0)
     schwa_overstress_penalty = float(schwa_metrics.get("schwa_overstress_penalty") or 0.0)
-    total_penalty = pronunciation_penalty + korean_like_penalty + liquid_alt_penalty + liquid_onset_penalty + schwa_overstress_penalty
+
+    active_liquid_alt_penalty = 0.0
+    active_liquid_onset_penalty = 0.0
+    total_penalty = pronunciation_penalty + korean_like_penalty + active_liquid_alt_penalty + active_liquid_onset_penalty + schwa_overstress_penalty
 
     duration_ratio = duration_ms / (ref_duration_ms + EPSILON)
     final_score = float(np.clip(base_score - total_penalty, 0.0, 100.0))
@@ -587,6 +601,8 @@ def score_pronunciation(
         "korean_like_penalty": round(korean_like_penalty, 1),
         "liquid_alt_penalty": round(liquid_alt_penalty, 1),
         "liquid_onset_penalty": round(liquid_onset_penalty, 1),
+        "active_liquid_alt_penalty": round(active_liquid_alt_penalty, 1),
+        "active_liquid_onset_penalty": round(active_liquid_onset_penalty, 1),
         "schwa_overstress_penalty": round(schwa_overstress_penalty, 1),
         "mismatch_penalty": 0.0,
         "total_penalty": round(total_penalty, 1),
