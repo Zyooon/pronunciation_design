@@ -1,5 +1,8 @@
 import csv
 import json
+import re
+import shutil
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Generator
@@ -30,7 +33,9 @@ from pipeline.word_targets import attach_word_target_features, load_word_targets
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-RESULTS_PATH = PROJECT_ROOT / "data" / "results.csv"
+DATA_DIR = PROJECT_ROOT / "data"
+RESULTS_PATH = DATA_DIR / "results.csv"
+USER_RECORDINGS_DIR = DATA_DIR / "user_recordings"
 ANALYSIS_DETAIL_KEYS = (
     "duration_ms",
     "zcr_mean",
@@ -169,6 +174,43 @@ def _attach_analysis_details(result: dict[str, Any], features: dict[str, Any]) -
         if key in features:
             details[key] = features[key]
     result["details"] = details
+
+
+def _safe_filename_part(value: str | None, fallback: str = "unknown") -> str:
+    text = (value or fallback).strip().lower()
+    text = re.sub(r"[^a-z0-9_-]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text or fallback
+
+
+def _standardize_recording_file(audio_file: str, target: TargetWord) -> str:
+    """Gradio 임시 녹음 파일을 표준 위치에 복사하고 프로젝트 기준 상대경로를 반환한다.
+
+    새 녹음은 data/user_recordings/YYYY-MM-DD/{word}_{phoneme}_{HHMMSS}_{uuid}.ext 형태로 저장한다.
+    기존 DB row는 건드리지 않는다.
+    """
+    source_path = Path(audio_file)
+    if not source_path.exists() or not source_path.is_file():
+        return audio_file
+
+    now = datetime.now()
+    date_dir = now.strftime("%Y-%m-%d")
+    time_part = now.strftime("%H%M%S")
+    short_id = uuid.uuid4().hex[:8]
+    suffix = source_path.suffix.lower() or ".wav"
+    filename = "_".join([
+        _safe_filename_part(target.word),
+        _safe_filename_part(target.phoneme, "phoneme"),
+        time_part,
+        short_id,
+    ]) + suffix
+
+    destination_dir = USER_RECORDINGS_DIR / date_dir
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination_path = destination_dir / filename
+    shutil.copy2(source_path, destination_path)
+
+    return destination_path.relative_to(PROJECT_ROOT).as_posix()
 
 
 def save_result(
@@ -429,13 +471,14 @@ def analyze_pronunciation(target_id: str, audio_file: str | None) -> Generator:
             recording_quality_result=quality_result,
         )
         _attach_analysis_details(result, features)
+        standardized_recording_path = _standardize_recording_file(audio_file, target)
         save_result(
             target_word=target.word,
             korean_pronunciation=target.korean_pronunciation,
             phoneme=target.phoneme,
             result=result,
             features=features,
-            recording_path=audio_file,
+            recording_path=standardized_recording_path,
         )
         yield gr.update(visible=False), gr.update(visible=True), render_result_content(target, result, reference), ""
     except Exception as exc:
