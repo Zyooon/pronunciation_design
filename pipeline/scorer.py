@@ -48,6 +48,11 @@ _LIQUID_ALT_SCORE_STRONG = 46.0
 _LIQUID_ALT_PENALTY_MULTIPLIER = 0.55
 _LIQUID_ALT_PENALTY_MAX = 10.0
 
+_LIQUID_ONSET_SCORE_START = 56.0
+_LIQUID_ONSET_SCORE_STRONG = 48.0
+_LIQUID_ONSET_PENALTY_MULTIPLIER = 0.5
+_LIQUID_ONSET_PENALTY_MAX = 8.0
+
 _QUALITY_GATE_FEEDBACK = "녹음 품질이 낮아 발음 점수를 신뢰하기 어렵습니다. 다시 녹음해주세요."
 _WORD_MISMATCH_FEEDBACK = "녹음된 단어가 목표 단어와 달라 발음 점수를 신뢰하기 어렵습니다. 목표 단어를 다시 녹음해주세요."
 
@@ -116,14 +121,18 @@ def zcr_feature_score(user_value: float, ref_value: float) -> float:
 
 
 def _mfcc_distance(user_features: AudioFeatures, reference: ReferenceVector | None) -> float | None:
+    return _vector_distance(user_features, reference, "mfcc_mean")
+
+
+def _vector_distance(user_features: AudioFeatures, reference: ReferenceVector | None, key: str) -> float | None:
     if reference is None:
         return None
-    user_mfcc = user_features.get("mfcc_mean")
-    ref_mfcc = reference.get("mfcc_mean")
-    if user_mfcc is None or ref_mfcc is None:
+    user_values = user_features.get(key)
+    ref_values = reference.get(key)
+    if user_values is None or ref_values is None:
         return None
     try:
-        return float(np.linalg.norm(np.array(user_mfcc, dtype=float) - np.array(ref_mfcc, dtype=float)))
+        return float(np.linalg.norm(np.array(user_values, dtype=float) - np.array(ref_values, dtype=float)))
     except Exception:
         return None
 
@@ -235,11 +244,14 @@ def compute_liquid_alt_metrics(
     user_features: AudioFeatures,
     target_reference: ReferenceVector,
     alt_reference: ReferenceVector | None,
-) -> dict[str, float]:
+) -> dict[str, ScoreDetailValue]:
     target_distance = _mfcc_distance(user_features, target_reference)
     alt_distance = _mfcc_distance(user_features, alt_reference)
     if target_distance is None or alt_distance is None:
-        return {}
+        return {
+            "liquid_alt_status": "unavailable",
+            "liquid_alt_penalty": 0.0,
+        }
 
     alt_relative_score = alt_distance / (target_distance + alt_distance + EPSILON) * 100
     liquid_alt_penalty = max(
@@ -250,11 +262,59 @@ def compute_liquid_alt_metrics(
         liquid_alt_penalty += 3.0
     liquid_alt_penalty = float(np.clip(liquid_alt_penalty, 0.0, _LIQUID_ALT_PENALTY_MAX))
 
+    status = "korean_like" if alt_distance < target_distance else "english_like"
+    if liquid_alt_penalty > 0.0 and status == "english_like":
+        status = "borderline_korean_like"
+
     return {
+        "liquid_alt_status": status,
         "liquid_target_distance": round(target_distance, 4),
         "liquid_alt_distance": round(alt_distance, 4),
         "liquid_alt_relative_score": round(float(alt_relative_score), 1),
         "liquid_alt_penalty": round(liquid_alt_penalty, 1),
+    }
+
+
+def compute_liquid_onset_metrics(
+    user_features: AudioFeatures,
+    target_reference: ReferenceVector,
+    alt_reference: ReferenceVector | None,
+    phoneme: str,
+) -> dict[str, ScoreDetailValue]:
+    """/r/, /l/은 전체 단어보다 onset MFCC가 한국어식 ㄹ 계열에 가까운지 별도로 본다."""
+    if phoneme not in _LIQUID_PHONEMES:
+        return {
+            "liquid_onset_status": "not_applicable",
+            "liquid_onset_penalty": 0.0,
+        }
+
+    target_distance = _vector_distance(user_features, target_reference, "onset_mfcc_mean")
+    alt_distance = _vector_distance(user_features, alt_reference, "onset_mfcc_mean")
+    if target_distance is None or alt_distance is None:
+        return {
+            "liquid_onset_status": "missing_onset_features",
+            "liquid_onset_penalty": 0.0,
+        }
+
+    relative_score = alt_distance / (target_distance + alt_distance + EPSILON) * 100
+    penalty = max(
+        0.0,
+        (_LIQUID_ONSET_SCORE_START - relative_score) * _LIQUID_ONSET_PENALTY_MULTIPLIER,
+    )
+    if relative_score < _LIQUID_ONSET_SCORE_STRONG:
+        penalty += 2.0
+    penalty = float(np.clip(penalty, 0.0, _LIQUID_ONSET_PENALTY_MAX))
+
+    status = "korean_like" if alt_distance < target_distance else "english_like"
+    if penalty > 0.0 and status == "english_like":
+        status = "borderline_korean_like"
+
+    return {
+        "liquid_onset_status": status,
+        "liquid_onset_en_distance": round(target_distance, 4),
+        "liquid_onset_ko_distance": round(alt_distance, 4),
+        "liquid_onset_relative_score": round(float(relative_score), 1),
+        "liquid_onset_penalty": round(penalty, 1),
     }
 
 
@@ -469,10 +529,13 @@ def _get_liquid_metrics(
     user_features: AudioFeatures,
     reference: ReferenceVector,
     liquid_alt_reference: ReferenceVector | None,
-) -> dict[str, float]:
+) -> dict[str, ScoreDetailValue]:
     if phoneme not in _LIQUID_PHONEMES:
         return {}
-    return compute_liquid_alt_metrics(user_features, reference, liquid_alt_reference)
+    return {
+        **compute_liquid_alt_metrics(user_features, reference, liquid_alt_reference),
+        **compute_liquid_onset_metrics(user_features, reference, liquid_alt_reference, phoneme),
+    }
 
 
 def score_pronunciation(
@@ -503,9 +566,10 @@ def score_pronunciation(
     schwa_metrics = compute_schwa_overstress_metrics(user_features, reference, phoneme)
 
     korean_like_penalty = float(ko_metrics.get("korean_like_penalty") or 0.0)
-    liquid_alt_penalty = liquid_alt_metrics.get("liquid_alt_penalty", 0.0)
+    liquid_alt_penalty = float(liquid_alt_metrics.get("liquid_alt_penalty") or 0.0)
+    liquid_onset_penalty = float(liquid_alt_metrics.get("liquid_onset_penalty") or 0.0)
     schwa_overstress_penalty = float(schwa_metrics.get("schwa_overstress_penalty") or 0.0)
-    total_penalty = pronunciation_penalty + korean_like_penalty + liquid_alt_penalty + schwa_overstress_penalty
+    total_penalty = pronunciation_penalty + korean_like_penalty + liquid_alt_penalty + liquid_onset_penalty + schwa_overstress_penalty
 
     duration_ratio = duration_ms / (ref_duration_ms + EPSILON)
     final_score = float(np.clip(base_score - total_penalty, 0.0, 100.0))
@@ -522,6 +586,7 @@ def score_pronunciation(
         "pronunciation_penalty": pronunciation_penalty,
         "korean_like_penalty": round(korean_like_penalty, 1),
         "liquid_alt_penalty": round(liquid_alt_penalty, 1),
+        "liquid_onset_penalty": round(liquid_onset_penalty, 1),
         "schwa_overstress_penalty": round(schwa_overstress_penalty, 1),
         "mismatch_penalty": 0.0,
         "total_penalty": round(total_penalty, 1),
