@@ -5,6 +5,9 @@ import numpy as np
 N_MFCC = 13
 MFCC_SEGMENT_NAMES = ("start", "middle", "end")
 DEFAULT_ONSET_WINDOW_MS = 200.0
+ONSET_RMS_NOISE_THRESHOLD = 0.005
+ONSET_RMS_WINDOW_MS = 150.0
+_ONSET_HOP_LENGTH = 512
 
 FeatureValue = float | list[float]
 
@@ -90,25 +93,55 @@ def extract_spectral_centroid(waveform: np.ndarray, sr: int) -> float:
     return float(np.mean(librosa.feature.spectral_centroid(y=waveform, sr=sr)))
 
 
+def _find_valid_onset_sample(
+    waveform: np.ndarray,
+    sr: int,
+    rms_threshold: float = ONSET_RMS_NOISE_THRESHOLD,
+) -> int:
+    """RMS 임계값을 넘는 첫 onset 샘플 인덱스를 반환한다.
+
+    틱 노이즈·숨소리처럼 임계값 미만인 피크는 건너뛴다.
+    유효한 onset을 찾지 못하면 0을 반환해 오디오 시작을 기준으로 삼는다.
+    """
+    onset_samples = librosa.onset.onset_detect(
+        y=waveform, sr=sr, units="samples", hop_length=_ONSET_HOP_LENGTH
+    )
+    for raw_idx in onset_samples:
+        sample_idx = int(raw_idx)
+        frame_end = min(sample_idx + _ONSET_HOP_LENGTH, len(waveform))
+        frame_rms = float(np.sqrt(np.mean(waveform[sample_idx:frame_end] ** 2)))
+        if frame_rms >= rms_threshold:
+            return sample_idx
+    return 0
+
+
 def extract_onset_window_features(
     waveform: np.ndarray,
     sr: int,
     window_ms: float = DEFAULT_ONSET_WINDOW_MS,
 ) -> dict[str, FeatureValue]:
-    """trim 이후 오디오의 앞쪽 고정 시간 window 특징을 추출합니다.
+    """trim 이후 오디오의 Onset 구간 특징을 추출합니다.
 
-    단어 전체 평균 feature로 희석되는 onset 자음(/r/, /l/, /θ/, /f/, /v/)의
-    분리 신호를 확인하기 위한 분석용 feature입니다. 현재 scorer 점수에는
-    직접 반영하지 않고 CSV/DB details 분석에 사용합니다.
+    librosa.onset.onset_detect로 유효 onset 시점을 감지한다.
+    틱 노이즈·숨소리 방어: RMS 임계값 미만 피크는 건너뛴다.
+    onset_rms_mean은 onset 감지 시점부터 150ms 구간의 평균 RMS다.
+    나머지 특징(MFCC·ZCR·Spectral)은 onset 시점부터 window_ms 구간을 사용한다.
     """
-    onset_waveform = _slice_onset_window(waveform, sr, window_ms)
+    onset_sample = _find_valid_onset_sample(waveform, sr)
+    onset_waveform = _slice_onset_window(waveform[onset_sample:], sr, window_ms)
     actual_window_ms = extract_duration_ms(onset_waveform, sr)
+
+    rms_window_samples = max(1, int(sr * ONSET_RMS_WINDOW_MS / 1000))
+    rms_window = waveform[onset_sample : onset_sample + rms_window_samples]
+    if len(rms_window) == 0:
+        rms_window = onset_waveform
+    onset_rms_mean = extract_rms(rms_window)
 
     return {
         "onset_window_ms": actual_window_ms,
         "onset_mfcc_mean": _to_float_list(extract_mfcc(onset_waveform, sr)),
         "onset_zcr_mean": extract_zcr(onset_waveform),
-        "onset_rms_mean": extract_rms(onset_waveform),
+        "onset_rms_mean": onset_rms_mean,
         "onset_spectral_centroid_mean": extract_spectral_centroid(onset_waveform, sr),
     }
 

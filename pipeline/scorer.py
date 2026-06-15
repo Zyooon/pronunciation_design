@@ -36,12 +36,10 @@ _KO_RELATIVE_PENALTY_STRONG = 52.0
 _KO_RELATIVE_PENALTY_MULTIPLIER = 0.8
 _KO_RELATIVE_PENALTY_MAX = 15.0
 
-_SCHWA_DURATION_RATIO_START = 1.25
-_SCHWA_RMS_RATIO_START = 1.35
-_SCHWA_DURATION_PENALTY_MULTIPLIER = 6.0
-_SCHWA_RMS_PENALTY_MULTIPLIER = 5.0
-_SCHWA_COMBINED_OVERSTRESS_BONUS = 2.0
-_SCHWA_OVERSTRESS_PENALTY_MAX = 10.0
+_SCHWA_ONSET_RATIO_FLOOR = 0.01
+_SCHWA_ONSET_RATIO_THRESHOLD = 1.3
+_SCHWA_ONSET_PENALTY_MULTIPLIER = 5.0
+_SCHWA_ONSET_PENALTY_MAX = 12.0
 
 _LIQUID_ALT_SCORE_START = 53.0
 _LIQUID_ALT_SCORE_STRONG = 46.0
@@ -194,40 +192,47 @@ def compute_schwa_overstress_metrics(
     reference: ReferenceVector,
     phoneme: str,
 ) -> dict[str, ScoreDetailValue]:
-    """/ə/는 약하게 지나가야 하므로 길이와 에너지가 과하면 penalty만 적용한다."""
+    """/ə/는 초반 에너지가 억제되어야 하므로 onset_ratio 기반 패널티를 부과한다.
+
+    onset_ratio = onset_rms_mean / max(overall_rms_mean, FLOOR)
+    사용자의 onset_ratio가 레퍼런스 ratio의 threshold배를 초과하면
+    초반 과강세(Over-stress) 콩글리시로 판정해 패널티를 부과한다.
+
+    Args:
+        user_features: 사용자 녹음 특징 (onset_rms_mean, rms_mean 필요)
+        reference: ElevenLabs reference 벡터 (onset_rms_mean, rms_mean 필요)
+        phoneme: 채점 음소 (ə 외 음소는 즉시 반환)
+    """
     if phoneme not in _SCHWA_PHONEMES:
         return {
             "schwa_overstress_status": "not_applicable",
             "schwa_overstress_penalty": 0.0,
         }
 
-    duration_ms = float(user_features.get("duration_ms", 0.0))
-    ref_duration_ms = float(reference.get("duration_ms", 0.0))
-    rms_mean = float(user_features.get("rms_mean", 0.0))
-    ref_rms_mean = float(reference.get("rms_mean", 0.0))
+    user_onset_rms = float(user_features.get("onset_rms_mean") or 0.0)
+    user_overall_rms = float(user_features.get("rms_mean") or 0.0)
+    ref_onset_rms = float(reference.get("onset_rms_mean") or 0.0)
+    ref_overall_rms = float(reference.get("rms_mean") or 0.0)
 
-    duration_ratio = duration_ms / (ref_duration_ms + EPSILON)
-    rms_ratio = (max(rms_mean, 0.0) + _RMS_SCORE_FLOOR) / (max(ref_rms_mean, 0.0) + _RMS_SCORE_FLOOR)
-    rms_log_ratio = float(np.log(rms_ratio))
+    user_onset_ratio = user_onset_rms / max(user_overall_rms, _SCHWA_ONSET_RATIO_FLOOR)
+    ref_onset_ratio = ref_onset_rms / max(ref_overall_rms, _SCHWA_ONSET_RATIO_FLOOR)
 
-    duration_excess = max(0.0, duration_ratio - _SCHWA_DURATION_RATIO_START)
-    rms_excess = max(0.0, rms_log_ratio - float(np.log(_SCHWA_RMS_RATIO_START)))
+    if ref_onset_ratio < EPSILON:
+        return {
+            "schwa_overstress_status": "reference_unavailable",
+            "schwa_onset_ratio": round(user_onset_ratio, 3),
+            "schwa_overstress_penalty": 0.0,
+        }
 
-    duration_penalty = duration_excess * _SCHWA_DURATION_PENALTY_MULTIPLIER
-    rms_penalty = rms_excess * _SCHWA_RMS_PENALTY_MULTIPLIER
-    combined_bonus = _SCHWA_COMBINED_OVERSTRESS_BONUS if duration_penalty > 0.0 and rms_penalty > 0.0 else 0.0
-    penalty = float(np.clip(duration_penalty + rms_penalty + combined_bonus, 0.0, _SCHWA_OVERSTRESS_PENALTY_MAX))
-
+    ratio_excess = max(0.0, user_onset_ratio - ref_onset_ratio * _SCHWA_ONSET_RATIO_THRESHOLD)
+    penalty = float(np.clip(ratio_excess * _SCHWA_ONSET_PENALTY_MULTIPLIER, 0.0, _SCHWA_ONSET_PENALTY_MAX))
     status = "overstressed" if penalty > 0.0 else "ok"
+
     return {
         "schwa_overstress_status": status,
-        "schwa_duration_ratio": round(duration_ratio, 3),
-        "schwa_rms_ratio": round(rms_ratio, 3),
-        "schwa_rms_log_ratio": round(rms_log_ratio, 3),
-        "schwa_duration_excess": round(duration_excess, 3),
-        "schwa_rms_excess": round(rms_excess, 3),
-        "schwa_duration_penalty": round(duration_penalty, 1),
-        "schwa_rms_penalty": round(rms_penalty, 1),
+        "schwa_onset_ratio": round(user_onset_ratio, 3),
+        "schwa_ref_onset_ratio": round(ref_onset_ratio, 3),
+        "schwa_ratio_excess": round(ratio_excess, 3),
         "schwa_overstress_penalty": round(penalty, 1),
     }
 

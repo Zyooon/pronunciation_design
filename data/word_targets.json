@@ -48,5 +48,15 @@
     "word": "vast",
     "target_phoneme": "v",
     "position": "onset"
+  },
+  "about|ə": {
+    "word": "about",
+    "target_phoneme": "ə",
+    "position": "onset"
+  },
+  "again|ə": {
+    "word": "again",
+    "target_phoneme": "ə",
+    "position": "onset"
   }
 }
