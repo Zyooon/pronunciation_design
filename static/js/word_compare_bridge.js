@@ -1,44 +1,32 @@
 // Label Review -> Word Compare 연결 전용 스크립트
 // Word Compare는 analysis_viewer 전용 진단 화면으로 사용한다.
-// Label Review에서 선택한 row를 종합 요약 / 영어 reference 비교 / 한국어 패턴 비교 3섹션으로 렌더링한다.
+// 현재 DB/details_json에 실제 저장되는 값 기준으로 렌더링한다.
 
 (function () {
   const WORD_COMPARE_PLACEHOLDER = `<div class="no-data-msg">Label Review 탭에서 비교할 단어명을 선택하세요.</div>`;
+  const CONSONANT_PHONEMES = new Set(["θ", "f", "v", "r", "l", "s", "z", "ʃ", "tʃ", "dʒ", "p", "b", "t", "d", "k", "g"]);
 
-  const ENGLISH_GROUPS = [
-    {
-      title: "MFCC",
-      subtitle: "음색 / 입 모양",
-      keys: [
-        ["mfcc_mean_dist", "Mean", "영어 ref 대비 평균 거리"],
-        ["mfcc_max_dist", "Max", "영어 ref 대비 최대 오차"],
-        ["mfcc_std_dist", "Std", "변화 안정성"],
-      ],
-    },
-    {
-      title: "ZCR",
-      subtitle: "자음 명확성",
-      keys: [
-        ["zcr_mean_dist", "Mean", "자음 평균 차이"],
-        ["zcr_max_dist", "Max", "자음 최대 오차"],
-        ["zcr_std_dist", "Std", "자음 변화 안정성"],
-      ],
-    },
-    {
-      title: "RMS",
-      subtitle: "강세 / 볼륨",
-      keys: [
-        ["rms_mean_dist", "Mean", "강세 평균 차이"],
-        ["rms_max_dist", "Max", "강세 최대 오차"],
-        ["rms_std_dist", "Std", "강세 변화 안정성"],
-      ],
-    },
+  const ENGLISH_REFERENCE_METRICS = [
+    ["mfcc_distance", "MFCC distance", "낮을수록 영어 reference와 가깝습니다.", "distance", "lower"],
+    ["mfcc_score", "MFCC score", "높을수록 음색/입 모양이 reference와 가깝습니다.", "score", "higher"],
+    ["duration_score", "Duration score", "높을수록 길이가 reference와 가깝습니다.", "score", "higher"],
+    ["zcr_score", "ZCR score", "높을수록 자음 명확성이 reference와 가깝습니다.", "score", "higher"],
+    ["rms_score", "RMS score", "높을수록 강세/볼륨이 reference와 가깝습니다.", "score", "higher"],
+    ["spectral_centroid_score", "Spectral score", "높을수록 주파수 중심이 reference와 가깝습니다.", "score", "higher"],
   ];
 
-  const KOREAN_PATTERN_KEYS = [
-    ["ko_mfcc_mean_dist", "KO MFCC", "입 모양이 한국어식 reference와 얼마나 가까운가"],
-    ["ko_zcr_mean_dist", "KO ZCR", "자음이 한국어식 뭉개짐과 얼마나 가까운가"],
-    ["ko_rms_mean_dist", "KO RMS", "강세가 한국어식 평탄함과 얼마나 가까운가"],
+  const ONSET_METRICS = [
+    ["onset_mfcc_mean", "Onset MFCC", "자음 시작 구간의 MFCC 관찰값입니다."],
+    ["onset_zcr_mean", "Onset ZCR", "자음 시작 구간의 ZCR 관찰값입니다."],
+    ["onset_rms_mean", "Onset RMS", "자음 시작 구간의 RMS 관찰값입니다."],
+    ["onset_spectral_centroid_mean", "Onset spectral", "자음 시작 구간의 spectral centroid 관찰값입니다."],
+  ];
+
+  const KOREAN_PATTERN_METRICS = [
+    ["en_distance", "English distance", "낮을수록 영어 reference와 가깝습니다.", "lower"],
+    ["ko_distance", "Korean-like distance", "높을수록 한국어식 reference와 멀어져 더 좋습니다.", "higher"],
+    ["relative_distance_score", "Relative score", "높을수록 영어 reference 쪽에 가까운 경향입니다.", "higher"],
+    ["korean_like_penalty", "Korean-like penalty", "낮을수록 좋습니다. 한국어식 패턴 감지 시 감점됩니다.", "lower"],
   ];
 
   window.loadWordCompare = function loadWordCompareFromLabelReviewOnly() {
@@ -72,6 +60,10 @@
       final_score: row.final_score ?? row.score ?? details.final_score ?? null,
       test_label: row.test_label || null,
       duration_ratio: row.duration_ratio ?? details.duration_ratio ?? null,
+      recording_quality_status: row.recording_quality_status ?? details.recording_quality_status ?? null,
+      korean_like_penalty: row.korean_like_penalty ?? details.korean_like_penalty ?? null,
+      korean_pattern_diagnosis: row.korean_pattern_diagnosis ?? details.korean_pattern_diagnosis ?? null,
+      korean_pattern_status: row.korean_pattern_status ?? details.korean_pattern_status ?? null,
     };
   }
 
@@ -82,48 +74,58 @@
     const wrap = document.getElementById("word-compare-wrap");
     if (!wrap) return;
 
-    const englishMetrics = collectEnglishMetrics(row);
+    const englishMetrics = collectEnglishReferenceMetrics(row);
+    const onsetMetrics = collectOnsetMetrics(row);
     const koreanMetrics = collectKoreanPatternMetrics(row);
-    const hasAnyDetailedMetric = englishMetrics.some((m) => m.value != null) || koreanMetrics.some((m) => m.value != null);
+    const hasAnyMetric = [...englishMetrics, ...onsetMetrics, ...koreanMetrics].some((m) => m.value != null);
 
     wrap.innerHTML = `
-      ${renderSummarySection(row, englishMetrics, koreanMetrics)}
-      ${renderEnglishReferenceSection(englishMetrics)}
-      ${renderKoreanPatternSection(koreanMetrics)}
-      ${!hasAnyDetailedMetric ? renderMissingMetricNotice() : ""}
+      ${renderSummarySection(row)}
+      ${renderEnglishReferenceSection(row, englishMetrics, onsetMetrics)}
+      ${renderKoreanPatternSection(row, koreanMetrics)}
+      ${!hasAnyMetric ? renderMissingMetricNotice() : ""}
     `;
 
-    renderMetricChart("chart-en-reference-dist", englishMetrics.filter((m) => m.value != null), "english");
-    renderMetricChart("chart-ko-pattern-dist", koreanMetrics.filter((m) => m.value != null), "korean");
+    renderMetricChart("chart-en-reference-scores", englishMetrics.filter((m) => m.value != null), "english");
+    renderMetricChart("chart-ko-pattern", koreanMetrics.filter((m) => m.value != null), "korean");
   }
 
-  function collectEnglishMetrics(row) {
-    return ENGLISH_GROUPS.flatMap((group) => group.keys.map(([key, shortLabel, description]) => ({
-      key,
-      group: group.title,
-      groupSubtitle: group.subtitle,
-      label: `${group.title} ${shortLabel}`,
-      description,
-      value: numOrNull(row[key]),
-    })));
-  }
-
-  function collectKoreanPatternMetrics(row) {
-    return KOREAN_PATTERN_KEYS.map(([key, label, description]) => ({
+  function collectEnglishReferenceMetrics(row) {
+    return ENGLISH_REFERENCE_METRICS.map(([key, label, description, type, goodDirection]) => ({
       key,
       label,
       description,
+      type,
+      goodDirection,
       value: numOrNull(row[key]),
     }));
   }
 
-  function renderSummarySection(row, englishMetrics, koreanMetrics) {
-    const score = row.final_score ?? row.score;
-    const label = row.test_label || "unlabeled";
-    const durationRatio = row.duration_ratio;
-    const topEnglish = smallestOrLargestMetric(englishMetrics, "max");
-    const topKorean = smallestOrLargestMetric(koreanMetrics, "min");
+  function collectOnsetMetrics(row) {
+    return ONSET_METRICS.map(([key, label, description]) => ({
+      key,
+      label,
+      description,
+      type: "raw",
+      goodDirection: "observe",
+      value: numOrNull(row[key]),
+    }));
+  }
 
+  function collectKoreanPatternMetrics(row) {
+    return KOREAN_PATTERN_METRICS.map(([key, label, description, goodDirection]) => ({
+      key,
+      label,
+      description,
+      type: key.includes("penalty") ? "penalty" : "distance",
+      goodDirection,
+      value: numOrNull(row[key]),
+    }));
+  }
+
+  function renderSummarySection(row) {
+    const label = row.test_label || "unlabeled";
+    const score = row.final_score ?? row.score;
     return `
       <section class="word-compare-section">
         <div class="word-compare-section-head">
@@ -136,70 +138,92 @@
         <div class="stat-grid user-summary-grid">
           <div class="stat-card"><div class="stat-label">Word</div><div class="user-stat-value">${escHtml(row.word || "")}</div></div>
           <div class="stat-card"><div class="stat-label">Phoneme</div><div class="user-stat-value">/${escHtml(row.phoneme || "")}/</div></div>
-          <div class="stat-card"><div class="stat-label">Score</div><div class="user-stat-value">${formatValue(score, 1)}</div></div>
           <div class="stat-card"><div class="stat-label">Label</div><div class="user-stat-value" style="font-size:22px;color:${_labelColor(row.test_label ?? "NULL", "border")};">${escHtml(label)}</div></div>
-          <div class="stat-card"><div class="stat-label">Duration Ratio</div><div class="user-stat-value">${formatRatio(durationRatio)}</div></div>
-          <div class="stat-card"><div class="stat-label">English Distance Top</div><div class="word-compare-summary-value">${topEnglish ? `${escHtml(topEnglish.label)}<br><strong>${formatValue(topEnglish.value)}</strong>` : "—"}</div></div>
-          <div class="stat-card"><div class="stat-label">Korean Pattern Closest</div><div class="word-compare-summary-value ko">${topKorean ? `${escHtml(topKorean.label)}<br><strong>${formatValue(topKorean.value)}</strong>` : "—"}</div></div>
+          <div class="stat-card"><div class="stat-label">Score</div><div class="user-stat-value">${formatValue(score, 1)}</div></div>
+          <div class="stat-card"><div class="stat-label">Duration Ratio</div><div class="user-stat-value">${formatRatio(row.duration_ratio)}</div></div>
+          <div class="stat-card"><div class="stat-label">Recording Quality</div><div class="user-stat-value" style="font-size:22px;">${escHtml(row.recording_quality_status || "—")}</div></div>
+          <div class="stat-card"><div class="stat-label">Korean-like Penalty</div><div class="user-stat-value" style="color:#f97316;">${formatValue(row.korean_like_penalty, 1)}</div></div>
         </div>
       </section>
     `;
   }
 
-  function renderEnglishReferenceSection(metrics) {
+  function renderEnglishReferenceSection(row, metrics, onsetMetrics) {
+    const shouldShowOnset = isConsonantPhoneme(row.phoneme) && onsetMetrics.some((m) => m.value != null);
     return `
       <section class="word-compare-section">
         <div class="word-compare-section-head">
           <div>
             <h3>영어 Reference 비교</h3>
-            <p>낮을수록 영어 reference와 가깝습니다. MFCC/ZCR/RMS 각각 mean · max · std distance를 확인합니다.</p>
+            <p>distance는 낮을수록 좋고, score는 높을수록 좋습니다. 현재 실제 저장된 metric만 표시합니다.</p>
           </div>
         </div>
         <div class="word-compare-group-grid">
-          ${ENGLISH_GROUPS.map((group) => renderEnglishGroupCard(group, metrics)).join("")}
+          ${metrics.map(renderMetricCard).join("")}
         </div>
+        ${shouldShowOnset ? renderOnsetSection(onsetMetrics) : ""}
         <div class="chart-box word-compare-chart-box">
-          <div class="chart-title">English Reference Distance</div>
-          <div class="chart-canvas-wrap" style="height:320px;"><canvas id="chart-en-reference-dist"></canvas></div>
+          <div class="chart-title">English Reference Metrics</div>
+          <div class="chart-canvas-wrap" style="height:320px;"><canvas id="chart-en-reference-scores"></canvas></div>
         </div>
       </section>
     `;
   }
 
-  function renderEnglishGroupCard(group, metrics) {
-    const rows = group.keys.map(([key, shortLabel, description]) => {
-      const metric = metrics.find((m) => m.key === key);
-      return `
-        <div class="word-compare-metric-row">
-          <div><strong>${escHtml(shortLabel)}</strong><span>${escHtml(description)}</span></div>
-          <em>${formatValue(metric?.value)}</em>
-        </div>`;
-    }).join("");
+  function renderOnsetSection(onsetMetrics) {
     return `
-      <div class="word-compare-card english">
-        <div class="word-compare-card-title">${escHtml(group.title)} <span>${escHtml(group.subtitle)}</span></div>
-        ${rows}
+      <div class="word-compare-section-head" style="margin-top:12px;">
+        <div>
+          <h3 style="font-size:14px;">Onset 지표</h3>
+          <p>자음 시작 구간의 관찰값입니다. 현재는 좋고 나쁨을 직접 판정하지 않고 해석 보조용으로만 사용합니다.</p>
+        </div>
+      </div>
+      <div class="word-compare-group-grid">
+        ${onsetMetrics.map(renderMetricCard).join("")}
       </div>
     `;
   }
 
-  function renderKoreanPatternSection(metrics) {
+  function renderKoreanPatternSection(row, metrics) {
     return `
       <section class="word-compare-section">
         <div class="word-compare-section-head">
           <div>
             <h3>한국어 패턴 비교</h3>
-            <p>낮을수록 한국어식 reference 패턴과 가깝습니다. 분석용 지표이며 사용자 화면에는 아직 노출하지 않습니다.</p>
+            <p>한국어식 reference는 점수로 더하지 않고 penalty 트랩으로만 사용합니다.</p>
           </div>
+          <span class="pill ${getPatternPillClass(row.korean_pattern_status)}">${escHtml(row.korean_pattern_status || "unknown")}</span>
         </div>
+        ${renderKoreanDiagnosis(row)}
         <div class="word-compare-group-grid korean-grid">
           ${metrics.map(renderKoreanMetricCard).join("")}
         </div>
         <div class="chart-box word-compare-chart-box korean">
-          <div class="chart-title">Korean Pattern Distance</div>
-          <div class="chart-canvas-wrap" style="height:280px;"><canvas id="chart-ko-pattern-dist"></canvas></div>
+          <div class="chart-title">Korean Pattern Metrics</div>
+          <div class="chart-canvas-wrap" style="height:280px;"><canvas id="chart-ko-pattern"></canvas></div>
         </div>
       </section>
+    `;
+  }
+
+  function renderKoreanDiagnosis(row) {
+    const diagnosis = row.korean_pattern_diagnosis || buildKoreanDiagnosis(row);
+    const policy = row.korean_pattern_penalty_policy || "penalty_only";
+    return `
+      <div class="meta-box" style="margin-bottom:14px;border-color:#fed7aa;background:#fff7ed;color:#9a3412;">
+        <strong>진단:</strong> ${escHtml(diagnosis)}<br>
+        <strong>정책:</strong> ${escHtml(policy)} · 한국어 reference는 최종 점수에 직접 더하지 않고 korean_like_penalty로만 반영합니다.
+      </div>
+    `;
+  }
+
+  function renderMetricCard(metric) {
+    return `
+      <div class="word-compare-card english">
+        <div class="word-compare-card-title">${escHtml(metric.label)} <span>${escHtml(metric.description)}</span></div>
+        <div class="word-compare-korean-value" style="color:${metric.goodDirection === "lower" ? "#1677c7" : "#10b981"};">${formatValue(metric.value)}</div>
+        <p style="color:#6b7c8f;font-size:12px;line-height:1.6;">${escHtml(directionText(metric.goodDirection))}</p>
+      </div>
     `;
   }
 
@@ -209,6 +233,7 @@
         <div class="word-compare-card-title">${escHtml(metric.label)}</div>
         <div class="word-compare-korean-value">${formatValue(metric.value)}</div>
         <p>${escHtml(metric.description)}</p>
+        <p style="margin-top:6px;font-weight:700;color:#9a3412;">${escHtml(directionText(metric.goodDirection))}</p>
       </div>
     `;
   }
@@ -216,8 +241,8 @@
   function renderMissingMetricNotice() {
     return `
       <div class="no-data-msg" style="margin-top:16px;">
-        이 row에는 새 Word Compare metric이 아직 저장되어 있지 않습니다.<br>
-        scorer/features 쪽에서 duration_ratio, mfcc/zcr/rms distance, ko_* distance를 details_json에 저장한 뒤 다시 확인하세요.
+        이 row에는 Word Compare에 표시할 metric이 아직 저장되어 있지 않습니다.<br>
+        새 녹음 또는 재채점 후 다시 확인하세요.
       </div>
     `;
   }
@@ -231,22 +256,46 @@
       type: "bar",
       data: {
         labels: metrics.map((m) => m.label),
-        datasets: [{ label: mode === "korean" ? "KO pattern distance" : "English reference distance", data: metrics.map((m) => m.value), backgroundColor: color, borderColor: border, borderWidth: 1 }],
+        datasets: [{ label: mode === "korean" ? "Korean pattern" : "English reference", data: metrics.map((m) => m.value), backgroundColor: color, borderColor: border, borderWidth: 1 }],
       },
       options: {
         indexAxis: "y",
         responsive: true,
         maintainAspectRatio: false,
-        scales: { x: { beginAtZero: true, title: { display: true, text: "Distance" } } },
+        scales: { x: { beginAtZero: true } },
         plugins: { legend: { display: false } },
       },
     });
   }
 
-  function smallestOrLargestMetric(metrics, mode) {
-    const valid = metrics.filter((m) => m.value != null && Number.isFinite(Number(m.value)));
-    if (!valid.length) return null;
-    return valid.sort((a, b) => mode === "min" ? a.value - b.value : b.value - a.value)[0];
+  function isConsonantPhoneme(phoneme) {
+    return CONSONANT_PHONEMES.has(String(phoneme || ""));
+  }
+
+  function getPatternPillClass(status) {
+    if (status === "korean_like") return "pill-err";
+    if (status === "borderline_korean_like") return "pill-warn";
+    if (status === "english_like") return "pill-ok";
+    return "pill-muted";
+  }
+
+  function buildKoreanDiagnosis(row) {
+    const enDistance = numOrNull(row.en_distance);
+    const koDistance = numOrNull(row.ko_distance);
+    const phoneme = row.phoneme ? `/${row.phoneme}/` : "영어 reference";
+    if (enDistance == null || koDistance == null) {
+      return "한국어식 reference 비교 데이터가 아직 없습니다.";
+    }
+    if (koDistance < enDistance) {
+      return `현재 발음은 영어 ${phoneme} reference보다 한국어식 패턴에 더 가까운 경향이 있습니다.`;
+    }
+    return `현재 발음은 한국어식 reference보다 영어 ${phoneme} reference에 더 가까운 경향이 있습니다.`;
+  }
+
+  function directionText(direction) {
+    if (direction === "lower") return "낮을수록 좋음";
+    if (direction === "higher") return "높을수록 좋음";
+    return "관찰값";
   }
 
   function formatValue(value, digits = 3) {
