@@ -36,10 +36,10 @@ _KO_RELATIVE_PENALTY_STRONG = 52.0
 _KO_RELATIVE_PENALTY_MULTIPLIER = 0.8
 _KO_RELATIVE_PENALTY_MAX = 15.0
 
-_SCHWA_ONSET_RATIO_FLOOR = 0.01
-_SCHWA_ONSET_RATIO_THRESHOLD = 1.3
-_SCHWA_ONSET_PENALTY_MULTIPLIER = 5.0
-_SCHWA_ONSET_PENALTY_MAX = 12.0
+_SCHWA_RMS_SAFE_FLOOR = 0.01 
+_SCHWA_ONSET_TOLERANCE = 0.35 
+_SCHWA_OVERSTRESS_MULTIPLIER = 25.0 
+_SCHWA_OVERSTRESS_MAX_PENALTY = 15.0
 
 _LIQUID_ALT_SCORE_START = 53.0
 _LIQUID_ALT_SCORE_STRONG = 46.0
@@ -192,47 +192,37 @@ def compute_schwa_overstress_metrics(
     reference: ReferenceVector,
     phoneme: str,
 ) -> dict[str, ScoreDetailValue]:
-    """/ə/는 초반 에너지가 억제되어야 하므로 onset_ratio 기반 패널티를 부과한다.
-
-    onset_ratio = onset_rms_mean / max(overall_rms_mean, FLOOR)
-    사용자의 onset_ratio가 레퍼런스 ratio의 threshold배를 초과하면
-    초반 과강세(Over-stress) 콩글리시로 판정해 패널티를 부과한다.
-
-    Args:
-        user_features: 사용자 녹음 특징 (onset_rms_mean, rms_mean 필요)
-        reference: ElevenLabs reference 벡터 (onset_rms_mean, rms_mean 필요)
-        phoneme: 채점 음소 (ə 외 음소는 즉시 반환)
-    """
+    """/ə/는 단어 초반(Onset)에 과도한 에너지가 몰리는 것을 감점한다."""
     if phoneme not in _SCHWA_PHONEMES:
         return {
             "schwa_overstress_status": "not_applicable",
             "schwa_overstress_penalty": 0.0,
         }
 
-    user_onset_rms = float(user_features.get("onset_rms_mean") or 0.0)
-    user_overall_rms = float(user_features.get("rms_mean") or 0.0)
-    ref_onset_rms = float(reference.get("onset_rms_mean") or 0.0)
-    ref_overall_rms = float(reference.get("rms_mean") or 0.0)
+    # 1. Onset 피처 추출 (없으면 감점 스킵)
+    onset_rms = float(user_features.get("onset_rms_mean", 0.0))
+    overall_rms = float(user_features.get("rms_mean", 0.0))
+    ref_onset_rms = float(reference.get("onset_rms_mean", 0.0))
+    ref_overall_rms = float(reference.get("rms_mean", 0.0))
 
-    user_onset_ratio = user_onset_rms / max(user_overall_rms, _SCHWA_ONSET_RATIO_FLOOR)
-    ref_onset_ratio = ref_onset_rms / max(ref_overall_rms, _SCHWA_ONSET_RATIO_FLOOR)
+    if onset_rms == 0.0 or ref_onset_rms == 0.0:
+         return {"schwa_overstress_status": "missing_onset_features", "schwa_overstress_penalty": 0.0}
 
-    if ref_onset_ratio < EPSILON:
-        return {
-            "schwa_overstress_status": "reference_unavailable",
-            "schwa_onset_ratio": round(user_onset_ratio, 3),
-            "schwa_overstress_penalty": 0.0,
-        }
+    # 2. 비율 계산: 전체 볼륨 대비 초반 Onset 볼륨이 얼마나 큰가? (분모 폭발 방지 0.01)
+    user_onset_ratio = onset_rms / max(overall_rms, _SCHWA_RMS_SAFE_FLOOR)
+    ref_onset_ratio = ref_onset_rms / max(ref_overall_rms, _SCHWA_RMS_SAFE_FLOOR)
 
-    ratio_excess = max(0.0, user_onset_ratio - ref_onset_ratio * _SCHWA_ONSET_RATIO_THRESHOLD)
-    penalty = float(np.clip(ratio_excess * _SCHWA_ONSET_PENALTY_MULTIPLIER, 0.0, _SCHWA_ONSET_PENALTY_MAX))
+    # 3. 감점 로직: 유저의 초반 강세 비율이 원어민 비율 + 허용치(Tolerance)를 넘었을 때 감점
+    # 예: _SCHWA_ONSET_TOLERANCE = 0.3
+    ratio_diff = max(0.0, user_onset_ratio - (ref_onset_ratio + _SCHWA_ONSET_TOLERANCE))
+    
+    penalty = float(np.clip(ratio_diff * _SCHWA_OVERSTRESS_MULTIPLIER, 0.0, _SCHWA_OVERSTRESS_MAX_PENALTY))
+
     status = "overstressed" if penalty > 0.0 else "ok"
-
     return {
         "schwa_overstress_status": status,
-        "schwa_onset_ratio": round(user_onset_ratio, 3),
+        "schwa_user_onset_ratio": round(user_onset_ratio, 3),
         "schwa_ref_onset_ratio": round(ref_onset_ratio, 3),
-        "schwa_ratio_excess": round(ratio_excess, 3),
         "schwa_overstress_penalty": round(penalty, 1),
     }
 
