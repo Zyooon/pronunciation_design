@@ -44,7 +44,15 @@ _ALL_ROW_COLS = [
     "quality_penalty", "pronunciation_penalty", "total_penalty",
     "duration_penalty", "volume_penalty", "noise_penalty",
     "duration_ms", "rms_mean", "zcr_mean", "spectral_centroid_mean", "mfcc_distance",
+    "duration_ratio", "details_json",
+]
+
+_WORD_COMPARE_METRIC_KEYS = [
     "duration_ratio",
+    "mfcc_mean_dist", "mfcc_max_dist", "mfcc_std_dist",
+    "zcr_mean_dist", "zcr_max_dist", "zcr_std_dist",
+    "rms_mean_dist", "rms_max_dist", "rms_std_dist",
+    "ko_mfcc_mean_dist", "ko_zcr_mean_dist", "ko_rms_mean_dist",
 ]
 
 _PENALTY_COLS = [
@@ -240,7 +248,7 @@ def load_user_results_from_db(db_path: Path, limit: int = USER_RECORDINGS_LIMIT,
             _cte = ""
             _src = USER_RECORDINGS_TABLE
         row_cols = [c for c in _ALL_ROW_COLS if c in available_cols]
-        rows = [dict(row) for row in conn.execute(f"{_cte}SELECT {', '.join(row_cols)} FROM {_src} ORDER BY id DESC LIMIT ?", (limit,))]
+        rows = [_merge_details_json(dict(row)) for row in conn.execute(f"{_cte}SELECT {', '.join(row_cols)} FROM {_src} ORDER BY id DESC LIMIT ?", (limit,))]
         display_cols = [c for c in _TABLE_DISPLAY_COLS if c in available_cols]
         total = conn.execute(f"SELECT COUNT(*) FROM {USER_RECORDINGS_TABLE}").fetchone()[0]
         label_summary = [dict(row) for row in conn.execute(f"{_cte}SELECT test_label, COUNT(*) AS count, ROUND(AVG(score), 1) AS avg_score FROM {_src} GROUP BY test_label ORDER BY test_label")]
@@ -317,14 +325,20 @@ def load_label_review_results(db_path: Path, label: str = "", page: int = 1, lim
                 result["error"] = f"{USER_RECORDINGS_TABLE} 테이블이 없습니다."
                 return result
             _ensure_user_recordings_label_column(conn)
+            available_cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({USER_RECORDINGS_TABLE})")}
             count = conn.execute(f"SELECT COUNT(*) FROM {USER_RECORDINGS_TABLE} {where}", params).fetchone()[0]
+            requested_cols = [
+                "id", "created_at", "word", "phoneme", "test_label", "score", "grade",
+                "recording_path", "duration_ms", "rms_mean", "zcr_mean",
+                "spectral_centroid_mean", "mfcc_distance", "total_penalty",
+                "base_score", "final_score", "duration_ratio", "details_json",
+            ]
+            select_cols = [c for c in requested_cols if c in available_cols]
             rows = [
-                dict(row)
+                _merge_details_json(dict(row))
                 for row in conn.execute(
                     f"""
-                    SELECT id, created_at, word, phoneme, test_label, score, grade,
-                           recording_path, duration_ms, rms_mean, zcr_mean,
-                           spectral_centroid_mean, mfcc_distance, total_penalty
+                    SELECT {', '.join(select_cols)}
                     FROM {USER_RECORDINGS_TABLE}
                     {where}
                     ORDER BY id DESC
@@ -339,6 +353,26 @@ def load_label_review_results(db_path: Path, label: str = "", page: int = 1, lim
     except sqlite3.Error as exc:
         result["error"] = str(exc)
         return result
+
+
+def _merge_details_json(row: dict[str, Any]) -> dict[str, Any]:
+    raw_details = row.pop("details_json", None)
+    if not raw_details:
+        return row
+    try:
+        details = json.loads(raw_details)
+    except (TypeError, json.JSONDecodeError):
+        return row
+    if not isinstance(details, dict):
+        return row
+    row["details"] = details
+    for key in _WORD_COMPARE_METRIC_KEYS:
+        if key not in row or row.get(key) is None:
+            row[key] = details.get(key)
+    for key in ("base_score", "final_score", "mfcc_score", "duration_score", "rms_score", "zcr_score", "spectral_centroid_score", "quality_penalty", "pronunciation_penalty", "total_penalty"):
+        if key not in row or row.get(key) is None:
+            row[key] = details.get(key)
+    return row
 
 
 def _ensure_user_recordings_label_column(conn: sqlite3.Connection) -> None:
