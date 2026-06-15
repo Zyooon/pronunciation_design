@@ -96,11 +96,16 @@ button { border-radius: 14px !important; }
 .card-lbl { font-size: 11px; font-weight: 800; letter-spacing: .10em; text-transform: uppercase; color: #94a3b8; margin-bottom: 8px; }
 .card-body { font-size: 14.5px; color: #334155; line-height: 1.75; }
 .issue-card .card-lbl, .issue-card .card-body { color: #9a3412; }
-.metric-row { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
-.metric-name { font-size: 12px; font-weight: 700; color: #64748b; width: 78px; text-align: right; }
-.metric-track { flex: 1; height: 7px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+.metric-help { margin-bottom: 14px; color: #64748b; font-size: 12.5px; line-height: 1.65; }
+.metric-row { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+.metric-text { width: 118px; text-align: right; flex-shrink: 0; }
+.metric-name { font-size: 12px; font-weight: 800; color: #334155; line-height: 1.25; }
+.metric-desc { font-size: 10.5px; color: #94a3b8; line-height: 1.35; margin-top: 3px; }
+.metric-track-wrap { flex: 1; padding-top: 4px; }
+.metric-track { height: 8px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
 .metric-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #6366f1); border-radius: 999px; }
-.metric-val { width: 38px; text-align: right; font-size: 13px; font-weight: 800; color: #1e40af; }
+.metric-meaning { margin-top: 5px; color: #64748b; font-size: 11px; line-height: 1.45; }
+.metric-val { width: 42px; text-align: right; font-size: 13px; font-weight: 800; color: #1e40af; padding-top: 1px; }
 .actions { padding: 14px 16px 24px; gap: 10px; }
 @media (max-width: 480px) { .app-shell, .analysis-shell { padding: 0 0 60px !important; } .screen-card { margin: 0; border-radius: 0 0 20px 20px; } }
 """
@@ -128,6 +133,39 @@ _ISSUE_LABELS = {
     "extreme_zcr": "비정상적인 고주파/노이즈 패턴이 감지됐습니다",
     "word_mismatch": "목표 단어와 다른 단어가 감지됐습니다",
 }
+
+_SCORE_METRIC_DEFINITIONS = (
+    (
+        "mfcc_score",
+        "입모양/음색",
+        "MFCC",
+        "입 모양과 소리 색깔이 원어민 기준 발음과 얼마나 가까운지 봅니다.",
+    ),
+    (
+        "duration_score",
+        "박자/속도",
+        "Duration",
+        "단어를 말한 길이와 박자가 원어민 기준과 얼마나 가까운지 봅니다.",
+    ),
+    (
+        "rms_score",
+        "강세/에너지",
+        "RMS",
+        "모음의 힘과 소리 에너지 유지가 기준 발음과 얼마나 가까운지 봅니다.",
+    ),
+    (
+        "zcr_score",
+        "자음 명확성",
+        "ZCR",
+        "마찰음이나 끝 자음의 바람 소리가 기준 발음처럼 또렷한지 봅니다.",
+    ),
+    (
+        "spectral_centroid_score",
+        "소리 밝기",
+        "Spectral",
+        "소리의 밝기와 주파수 중심이 원어민 기준과 얼마나 가까운지 봅니다.",
+    ),
+)
 
 
 def ensure_results_csv() -> None:
@@ -330,31 +368,45 @@ def _render_issue_card(issue_flags: list[str]) -> str:
     """
 
 
+def _format_score_value(value: Any) -> str:
+    numeric_value = _float_or_none(value)
+    if numeric_value is None:
+        return str(value)
+    return f"{numeric_value:.1f}".rstrip("0").rstrip(".")
+
+
 def _render_metric_rows(details: dict[str, Any]) -> str:
-    label_map = {
-        "mfcc_score": "MFCC",
-        "duration_score": "Duration",
-        "rms_score": "RMS",
-        "zcr_score": "ZCR",
-        "spectral_centroid_score": "Spectral",
-    }
     rows: list[str] = []
-    for key, label in label_map.items():
+    for key, label, short_name, description in _SCORE_METRIC_DEFINITIONS:
         value = details.get(key)
         if value in ("", None):
             continue
         numeric_value = _float_or_none(value)
         width = 0 if numeric_value is None else max(0, min(100, numeric_value))
+        value_text = _format_score_value(value)
         rows.append(
             f'<div class="metric-row">'
+            f'<div class="metric-text">'
             f'<div class="metric-name">{label}</div>'
+            f'<div class="metric-desc">{short_name}</div>'
+            f'</div>'
+            f'<div class="metric-track-wrap">'
             f'<div class="metric-track"><div class="metric-fill" style="width:{width}%"></div></div>'
-            f'<div class="metric-val">{value}</div>'
+            f'<div class="metric-meaning">{description}</div>'
+            f'</div>'
+            f'<div class="metric-val">{value_text}</div>'
             f'</div>'
         )
     if not rows:
         return ""
-    return f'<div class="metrics-card"><div class="card-lbl">Detailed Metrics</div>{"".join(rows)}</div>'
+    return (
+        '<div class="metrics-card">'
+        '<div class="card-lbl">원어민 일치도 세부 분석</div>'
+        '<div class="metric-help">각 항목은 ElevenLabs 원어민 기준 발음과 비교한 0~100점입니다. '
+        '높을수록 기준 발음과 더 가깝다는 뜻이며, 전체 점수와 별도로 어떤 부분이 강한지 보여줍니다.</div>'
+        f'{"".join(rows)}'
+        '</div>'
+    )
 
 
 def render_result_content(target: TargetWord, result: dict[str, Any], reference: ReferenceVector) -> str:
