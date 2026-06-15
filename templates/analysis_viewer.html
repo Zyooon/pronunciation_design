@@ -5,6 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>발음교정기 분석 뷰어</title>
   <link rel="stylesheet" href="{{ url_for('static', path='css/analysis_viewer.css') }}" />
+  <style>
+    .word-compare-section { margin-bottom: 24px; }
+    .word-compare-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+    .word-compare-section-head h3 { font-size: 16px; font-weight: 800; color: #16324f; margin-bottom: 4px; }
+    .word-compare-section-head p { color: #6b7c8f; font-size: 12px; line-height: 1.6; }
+    .word-compare-summary-value { color: #1677c7; font-size: 14px; line-height: 1.5; margin-top: 6px; }
+    .word-compare-summary-value strong { font-size: 20px; }
+    .word-compare-summary-value.ko, .word-compare-korean-value { color: #f97316; }
+    .word-compare-group-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 16px; }
+    .word-compare-card { background: #fff; border: 1px solid #d8e9f7; border-radius: 12px; padding: 16px; box-shadow: 0 1px 4px rgba(22,119,199,0.06); }
+    .word-compare-card.english { border-top: 4px solid #3b82f6; }
+    .word-compare-card.korean, .word-compare-chart-box.korean { border-top: 4px solid #f97316; }
+    .word-compare-card-title { color: #16324f; font-size: 14px; font-weight: 800; margin-bottom: 12px; }
+    .word-compare-card-title span { color: #6b7c8f; display: block; font-size: 12px; font-weight: 600; margin-top: 2px; }
+    .word-compare-metric-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #f0f7ff; }
+    .word-compare-metric-row:last-child { border-bottom: none; }
+    .word-compare-metric-row strong { color: #1677c7; display: block; font-size: 13px; }
+    .word-compare-metric-row span { color: #6b7c8f; display: block; font-size: 11px; line-height: 1.5; margin-top: 2px; }
+    .word-compare-metric-row em { color: #16324f; font-size: 18px; font-style: normal; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .word-compare-korean-value { font-size: 28px; font-weight: 800; margin-bottom: 8px; }
+    .word-compare-card.korean p { color: #6b7c8f; font-size: 12px; line-height: 1.6; }
+    .word-compare-chart-box { margin-top: 8px; }
+    @media (max-width: 720px) { .word-compare-section-head { flex-direction: column; } .word-compare-group-grid { grid-template-columns: 1fr; } }
+  </style>
 </head>
 <body>
 
