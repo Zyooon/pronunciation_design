@@ -110,14 +110,14 @@
     wrap.innerHTML = `
       ${renderSummarySection(row, englishReference)}
       ${renderEnglishReferenceSection(row, englishReference, rawMetrics)}
-      ${renderElevenLabsScoreSection(row, scoreGroups, mfccDistance)}
+      ${renderElevenLabsScoreSection(row, scoreGroups, mfccDistance, scoreMetrics)}
       ${shouldShowOnset ? renderOnsetSection(onsetMetrics) : ""}
       ${renderKoreanPatternSection(row, koreanMetrics)}
       ${!hasAnyMetric ? renderMissingMetricNotice() : ""}
     `;
 
     renderReferenceComparisonCharts(rawMetrics.filter((m) => m.userValue != null || m.refValue != null));
-    renderScoreChart("chart-en-reference-scores", scoreGroups.usedScores);
+    renderScoreRadarChart("chart-en-reference-scores", scoreMetrics, scoreGroups.unusedScores);
     renderScoreChart("chart-ko-pattern", koreanMetrics.filter((m) => m.value != null), "korean");
   }
 
@@ -267,9 +267,9 @@
     `;
   }
 
-  function renderElevenLabsScoreSection(row, scoreGroups, mfccDistance) {
-    const { usedScores, unusedScores, missingExpectedScores } = scoreGroups;
-    const chartHeight = Math.max(160, usedScores.length * 60);
+  function renderElevenLabsScoreSection(row, scoreGroups, mfccDistance, scoreMetrics) {
+    const { unusedScores, missingExpectedScores } = scoreGroups;
+    const hasAnyScore = scoreMetrics.some((m) => m.value != null);
     return `
       <section class="word-compare-section">
         <div class="word-compare-section-head">
@@ -280,10 +280,10 @@
           <span class="pill pill-ok">higher is better</span>
         </div>
         ${renderMfccDistanceCard(mfccDistance)}
-        ${usedScores.length ? `
+        ${hasAnyScore ? `
           <div class="chart-box word-compare-chart-box">
-            <div class="chart-title">Score (0~100) · 원어민 일치도</div>
-            <div class="chart-canvas-wrap" style="height:${chartHeight}px;"><canvas id="chart-en-reference-scores"></canvas></div>
+            <div class="chart-title">발음 능력치 레이더 · 5대 지표 원어민 일치도 (0~100)</div>
+            <div class="chart-canvas-wrap" style="height:320px;"><canvas id="chart-en-reference-scores"></canvas></div>
           </div>
         ` : renderNoUsedScoresNotice(row.phoneme)}
         ${unusedScores.length ? renderUnusedScoresSection(unusedScores) : ""}
@@ -353,6 +353,30 @@
     `;
   }
 
+  function renderKoreanGauge(row) {
+    const score = numOrNull(row.relative_distance_score);
+    const enDist = numOrNull(row.en_distance);
+    const koDist = numOrNull(row.ko_distance);
+    if (score == null) return "";
+    const pct = Math.min(100, Math.max(0, score));
+    const annotation = enDist != null && koDist != null
+      ? `(내 원어민 거리: ${enDist.toFixed(1)} / 한국어식 거리: ${koDist.toFixed(1)})`
+      : "";
+    return `
+      <div class="mfcc-gauge-wrap">
+        <div class="mfcc-gauge-labels">
+          <span class="mfcc-gauge-label-left">한국어식 발음 (0점)</span>
+          <span class="mfcc-gauge-label-right">원어민 발음 (100점)</span>
+        </div>
+        <div class="mfcc-gauge-track">
+          <div class="mfcc-gauge-fill" style="width:${pct}%;"></div>
+          <div class="mfcc-gauge-pointer" style="left:${pct}%;" title="${pct.toFixed(1)}점">📍</div>
+        </div>
+        ${annotation ? `<p class="mfcc-gauge-annotation">${escHtml(annotation)}</p>` : ""}
+      </div>
+    `;
+  }
+
   function renderKoreanPatternSection(row, metrics) {
     return `
       <section class="word-compare-section">
@@ -363,6 +387,7 @@
           </div>
           <span class="pill ${getPatternPillClass(row.korean_pattern_status)}">${escHtml(row.korean_pattern_status || "unknown")}</span>
         </div>
+        ${renderKoreanGauge(row)}
         ${renderKoreanDiagnosis(row)}
         <div class="word-compare-group-grid korean-grid">
           ${metrics.map(renderKoreanMetricCard).join("")}
@@ -433,6 +458,66 @@
         maintainAspectRatio: false,
         scales: { y: { beginAtZero: true } },
         plugins: { legend: { display: false } },
+      },
+    });
+  }
+
+  function renderScoreRadarChart(canvasId, scoreMetrics, unusedScores = []) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas || typeof Chart === "undefined") return;
+    const axisLabels = ["음색 (MFCC)", "박자 (Duration)", "음량/강세 (RMS)", "자음 명확도 (ZCR)", "맑기 (Spectral)"];
+    const scoreKeys = ["mfcc_score", "duration_score", "rms_score", "zcr_score", "spectral_centroid_score"];
+    const unusedKeySet = new Set(unusedScores.map((m) => m.key));
+    const scores = scoreKeys.map((key) => {
+      const metric = scoreMetrics.find((m) => m.key === key);
+      return metric?.value ?? 0;
+    });
+    const pointColors = scoreKeys.map((key) => unusedKeySet.has(key) ? "#ef4444" : "#3b82f6");
+    new Chart(canvas, {
+      type: "radar",
+      data: {
+        labels: axisLabels,
+        datasets: [{
+          label: "발음 능력치",
+          data: scores,
+          backgroundColor: "rgba(59,130,246,0.18)",
+          borderColor: "#3b82f6",
+          borderWidth: 2.5,
+          pointBackgroundColor: pointColors,
+          pointBorderColor: "#fff",
+          pointBorderWidth: 1.5,
+          pointRadius: 4,
+          fill: true,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          r: {
+            min: 0,
+            max: 100,
+            ticks: { stepSize: 20, color: "#94a3b8", font: { size: 10 }, backdropColor: "transparent" },
+            grid: { color: "rgba(148,163,184,0.3)" },
+            angleLines: { color: "rgba(148,163,184,0.4)" },
+            pointLabels: {
+              color: (ctx) => unusedKeySet.has(scoreKeys[ctx.index]) ? "#ef4444" : "#16324f",
+              font: { size: 11, weight: "600" },
+            },
+          },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const key = scoreKeys[ctx.dataIndex];
+                const suffix = unusedKeySet.has(key) ? " (미사용)" : "점";
+                return ` ${Number(ctx.raw).toFixed(1)}${suffix}`;
+              },
+            },
+          },
+        },
       },
     });
   }

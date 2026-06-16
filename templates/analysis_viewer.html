@@ -28,6 +28,53 @@
     .word-compare-card.korean p { color: #6b7c8f; font-size: 12px; line-height: 1.6; }
     .word-compare-chart-box { margin-top: 8px; }
     @media (max-width: 720px) { .word-compare-section-head { flex-direction: column; } .word-compare-group-grid { grid-template-columns: 1fr; } }
+
+    /* ── MFCC Distance 게이지 ─────────────────────────────── */
+    .mfcc-gauge-wrap { margin: 0 0 18px; }
+    .mfcc-gauge-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .mfcc-gauge-label-left  { color: #f97316; }
+    .mfcc-gauge-label-right { color: #1677c7; }
+    .mfcc-gauge-track {
+      position: relative;
+      height: 22px;
+      border-radius: 11px;
+      background: linear-gradient(to right, #fed7aa 0%, #bfdbfe 100%);
+      overflow: visible;
+    }
+    .mfcc-gauge-fill {
+      position: absolute;
+      left: 0; top: 0;
+      height: 100%;
+      border-radius: 11px 0 0 11px;
+      background: linear-gradient(to right, #f97316 0%, #3b82f6 100%);
+      opacity: 0.55;
+      pointer-events: none;
+    }
+    .mfcc-gauge-pointer {
+      position: absolute;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 20px;
+      line-height: 1;
+      filter: drop-shadow(0 1px 3px rgba(0,0,0,0.25));
+      z-index: 2;
+      pointer-events: none;
+    }
+    .mfcc-gauge-annotation {
+      text-align: center;
+      color: #6b7c8f;
+      font-size: 11px;
+      margin-top: 6px;
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
