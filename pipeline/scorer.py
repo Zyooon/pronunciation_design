@@ -714,6 +714,24 @@ def _compute_l_micro_penalty(
     return 0.0, "none"
 
 
+def _compute_l_acoustic_borderline_penalty(
+    phoneme: str,
+    liquid_acoustic_status: str,
+) -> tuple[float, str]:
+    """/l/ liquid_acoustic_status == "borderline_korean_like" 전용 마이크로 패널티.
+
+    liquid_acoustic_status는 MFCC 전이 거리(c0_delta 등) 기반으로 판별되므로
+    liquid_alt_status(MFCC vs 대조 레퍼런스)와는 독립적인 채널이다.
+    두 채널이 모두 정상인 good/load 샘플은 어느 쪽도 borderline으로 찍히지 않아
+    이 패널티가 발동되지 않는다.
+    """
+    if phoneme != "l":
+        return 0.0, "none"
+    if liquid_acoustic_status == "borderline_korean_like":
+        return 2.0, "applied"
+    return 0.0, "none"
+
+
 def score_pronunciation(
     user_features: AudioFeatures,
     reference: ReferenceVector,
@@ -772,8 +790,10 @@ def score_pronunciation(
         )
     )
     liquid_alt_status = str(liquid_alt_metrics.get("liquid_alt_status") or "")
+    liquid_acoustic_status = str(liquid_acoustic_metrics.get("liquid_acoustic_status") or "")
     r_micro_penalty, r_micro_status = _compute_r_micro_penalty(phoneme, liquid_alt_status, user_features)
     l_micro_penalty, l_micro_status = _compute_l_micro_penalty(phoneme, liquid_alt_status)
+    l_borderline_penalty, l_borderline_status = _compute_l_acoustic_borderline_penalty(phoneme, liquid_acoustic_status)
     liquid_alt_penalty = float(liquid_alt_metrics.get("liquid_alt_penalty") or 0.0)
     liquid_onset_penalty = float(liquid_alt_metrics.get("liquid_onset_penalty") or 0.0)
     liquid_acoustic_penalty = float(liquid_acoustic_metrics.get("liquid_acoustic_penalty") or 0.0)
@@ -789,6 +809,7 @@ def score_pronunciation(
         + f_onset_mfcc_penalty
         + r_micro_penalty
         + l_micro_penalty
+        + l_borderline_penalty
         + active_liquid_alt_penalty
         + active_liquid_onset_penalty
         + liquid_acoustic_penalty
@@ -819,6 +840,8 @@ def score_pronunciation(
         "r_micro_status": r_micro_status,
         "l_micro_penalty": l_micro_penalty,
         "l_micro_status": l_micro_status,
+        "l_borderline_penalty": l_borderline_penalty,
+        "l_borderline_status": l_borderline_status,
         "schwa_overstress_penalty": round(schwa_overstress_penalty, 1),
         "f_onset_penalty": f_onset_penalty,
         "f_onset_zcr_ratio": round(f_onset_zcr_ratio, 4),
