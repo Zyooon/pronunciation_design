@@ -2,6 +2,7 @@ from typing import Any, TypedDict
 
 import numpy as np
 
+from pipeline.liquid_features import compute_liquid_acoustic_penalty
 from pipeline.quality import RecordingQualityResult, evaluate_recording_quality
 
 
@@ -549,6 +550,16 @@ def _get_liquid_metrics(
     return metrics
 
 
+def _get_liquid_acoustic_metrics(phoneme: str, user_features: AudioFeatures) -> dict[str, ScoreDetailValue]:
+    if phoneme not in _LIQUID_PHONEMES:
+        return {
+            "liquid_acoustic_status": "not_applicable",
+            "liquid_acoustic_penalty": 0.0,
+            "liquid_acoustic_penalty_applied": False,
+        }
+    return compute_liquid_acoustic_penalty(user_features, phoneme)
+
+
 def score_pronunciation(
     user_features: AudioFeatures,
     reference: ReferenceVector,
@@ -574,16 +585,25 @@ def score_pronunciation(
     pronunciation_penalty = compute_pronunciation_penalty(sub_scores, phoneme_type, phoneme)
     ko_metrics = _get_ko_metrics(phoneme, user_features, reference, ko_reference)
     liquid_alt_metrics = _get_liquid_metrics(phoneme, user_features, reference, liquid_alt_reference)
+    liquid_acoustic_metrics = _get_liquid_acoustic_metrics(phoneme, user_features)
     schwa_metrics = compute_schwa_overstress_metrics(user_features, reference, phoneme)
 
     korean_like_penalty = float(ko_metrics.get("korean_like_penalty") or 0.0)
     liquid_alt_penalty = float(liquid_alt_metrics.get("liquid_alt_penalty") or 0.0)
     liquid_onset_penalty = float(liquid_alt_metrics.get("liquid_onset_penalty") or 0.0)
+    liquid_acoustic_penalty = float(liquid_acoustic_metrics.get("liquid_acoustic_penalty") or 0.0)
     schwa_overstress_penalty = float(schwa_metrics.get("schwa_overstress_penalty") or 0.0)
 
     active_liquid_alt_penalty = 0.0
     active_liquid_onset_penalty = 0.0
-    total_penalty = pronunciation_penalty + korean_like_penalty + active_liquid_alt_penalty + active_liquid_onset_penalty + schwa_overstress_penalty
+    total_penalty = (
+        pronunciation_penalty
+        + korean_like_penalty
+        + active_liquid_alt_penalty
+        + active_liquid_onset_penalty
+        + liquid_acoustic_penalty
+        + schwa_overstress_penalty
+    )
 
     duration_ratio = duration_ms / (ref_duration_ms + EPSILON)
     final_score = float(np.clip(base_score - total_penalty, 0.0, 100.0))
@@ -593,6 +613,7 @@ def score_pronunciation(
         **sub_scores,
         **ko_metrics,
         **liquid_alt_metrics,
+        **liquid_acoustic_metrics,
         **schwa_metrics,
         **_get_quality_detail_fields(quality_result),
         "base_score": round(base_score, 1),
@@ -603,6 +624,7 @@ def score_pronunciation(
         "liquid_onset_penalty": round(liquid_onset_penalty, 1),
         "active_liquid_alt_penalty": round(active_liquid_alt_penalty, 1),
         "active_liquid_onset_penalty": round(active_liquid_onset_penalty, 1),
+        "liquid_acoustic_penalty": round(liquid_acoustic_penalty, 1),
         "schwa_overstress_penalty": round(schwa_overstress_penalty, 1),
         "mismatch_penalty": 0.0,
         "total_penalty": round(total_penalty, 1),
