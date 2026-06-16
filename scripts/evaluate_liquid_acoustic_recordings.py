@@ -39,6 +39,9 @@ LIQUID_FEATURE_FIELDS = (
     "liquid_transition_mfcc_distance",
     "liquid_transition_mfcc_slope",
     "liquid_transition_mfcc_delta_norm",
+    "liquid_transition_mfcc_c0_delta",
+    "liquid_transition_mfcc_c1_delta",
+    "liquid_transition_mfcc_c2_delta",
 )
 DETAIL_FIELDS = (
     "base_score",
@@ -209,6 +212,7 @@ def build_summary(rows: list[dict[str, Any]], labels: list[str], threshold: floa
             "avg_liquid_acoustic_penalty": describe(score_values(group_rows, "liquid_acoustic_penalty"))["avg"],
             "avg_mel_f3_to_low_ratio": describe(score_values(group_rows, "liquid_mel_f3_to_low_ratio"))["avg"],
             "avg_transition_mfcc_distance": describe(score_values(group_rows, "liquid_transition_mfcc_distance"))["avg"],
+            "avg_transition_mfcc_c0_delta": describe(score_values(group_rows, "liquid_transition_mfcc_c0_delta"))["avg"],
         }
     return summary
 
