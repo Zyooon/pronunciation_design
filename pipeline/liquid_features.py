@@ -22,7 +22,8 @@ F3_BAND_HZ = (2000.0, 3000.0)
 HIGH_BAND_HZ = (3000.0, 5000.0)
 
 # /r/ 감지 임계값: F3 Drop 누락 판별
-R_LOW_STRONG_THRESHOLD = 0.002    # Strong AND 조건 — f3_to_low
+# R_LOW_STRONG_THRESHOLD: 0.002 → 0.001 로 완화 (good/road f3_to_low≈0.0017 오탐 방어)
+R_LOW_STRONG_THRESHOLD = 0.001    # Strong AND 조건 — f3_to_low
 R_MID_STRONG_THRESHOLD = 0.11     # Strong AND 조건 — f3_to_mid
 R_LOW_WEAK_THRESHOLD = 0.0010     # Weak 단일 지표 — f3_to_low
 

@@ -58,6 +58,9 @@ _LIQUID_ONSET_PENALTY_MAX = 8.0
 # 데이터 수집 단계의 보수적 가설치 — 충분한 샘플 확보 후 재조정 필요
 _F_ONSET_MFCC_DISTANCE_THRESHOLD = 20.0
 
+# good/road(≈0.0017) 대비 korean_like/road(0.0001~0.0002)의 8~10배 격차를 이용한 핀셋 조건
+_R_MICRO_F3_TO_LOW_THRESHOLD = 0.0003
+
 _QUALITY_GATE_FEEDBACK = "녹음 품질이 낮아 발음 점수를 신뢰하기 어렵습니다. 다시 녹음해주세요."
 _WORD_MISMATCH_FEEDBACK = "녹음된 단어가 목표 단어와 달라 발음 점수를 신뢰하기 어렵습니다. 목표 단어를 다시 녹음해주세요."
 
@@ -671,6 +674,46 @@ def _compute_f_onset_crest_penalty(
     return 0.0, crest_factor, "none"
 
 
+def _compute_r_micro_penalty(
+    phoneme: str,
+    liquid_alt_status: str,
+    user_features: AudioFeatures,
+) -> tuple[float, str]:
+    """/r/ F3 극저값(< 0.0003) × liquid_alt_status 교차 핀셋 패널티.
+
+    /r/, /l/은 _KO_REFERENCE_PHONEMES 비대상이라 korean_pattern_status가 항상
+    "not_applicable"이므로 liquid_alt_status를 조건 변수로 사용한다.
+    good/road(f3_to_low ≈ 0.0017)와 8~20배 격차를 이용해 오독 샘플만 타격한다.
+    """
+    if phoneme != "r":
+        return 0.0, "none"
+    if liquid_alt_status not in ("borderline_korean_like", "korean_like"):
+        return 0.0, "none"
+    f3_to_low_raw = user_features.get("liquid_mel_f3_to_low_ratio")
+    if f3_to_low_raw is None:
+        return 0.0, "missing_f3_to_low"
+    if float(f3_to_low_raw) < _R_MICRO_F3_TO_LOW_THRESHOLD:
+        return 2.0, "applied"
+    return 0.0, "none"
+
+
+def _compute_l_micro_penalty(
+    phoneme: str,
+    liquid_alt_status: str,
+) -> tuple[float, str]:
+    """/l/ 경계선(borderline_korean_like) liquid_alt_status 마이크로 패널티.
+
+    /l/은 _KO_REFERENCE_PHONEMES 비대상이라 korean_pattern_status가 항상
+    "not_applicable"이므로 liquid_alt_status를 조건 변수로 사용한다.
+    borderline 생존 오독 샘플만 낙제선 아래로 밀어낸다.
+    """
+    if phoneme != "l":
+        return 0.0, "none"
+    if liquid_alt_status == "borderline_korean_like":
+        return 2.0, "applied"
+    return 0.0, "none"
+
+
 def score_pronunciation(
     user_features: AudioFeatures,
     reference: ReferenceVector,
@@ -728,6 +771,9 @@ def score_pronunciation(
             reference.get("onset_spectral_centroid_mean"),
         )
     )
+    liquid_alt_status = str(liquid_alt_metrics.get("liquid_alt_status") or "")
+    r_micro_penalty, r_micro_status = _compute_r_micro_penalty(phoneme, liquid_alt_status, user_features)
+    l_micro_penalty, l_micro_status = _compute_l_micro_penalty(phoneme, liquid_alt_status)
     liquid_alt_penalty = float(liquid_alt_metrics.get("liquid_alt_penalty") or 0.0)
     liquid_onset_penalty = float(liquid_alt_metrics.get("liquid_onset_penalty") or 0.0)
     liquid_acoustic_penalty = float(liquid_acoustic_metrics.get("liquid_acoustic_penalty") or 0.0)
@@ -741,6 +787,8 @@ def score_pronunciation(
         + f_onset_penalty
         + f_onset_crest_penalty
         + f_onset_mfcc_penalty
+        + r_micro_penalty
+        + l_micro_penalty
         + active_liquid_alt_penalty
         + active_liquid_onset_penalty
         + liquid_acoustic_penalty
@@ -767,6 +815,10 @@ def score_pronunciation(
         "active_liquid_alt_penalty": round(active_liquid_alt_penalty, 1),
         "active_liquid_onset_penalty": round(active_liquid_onset_penalty, 1),
         "liquid_acoustic_penalty": round(liquid_acoustic_penalty, 1),
+        "r_micro_penalty": r_micro_penalty,
+        "r_micro_status": r_micro_status,
+        "l_micro_penalty": l_micro_penalty,
+        "l_micro_status": l_micro_status,
         "schwa_overstress_penalty": round(schwa_overstress_penalty, 1),
         "f_onset_penalty": f_onset_penalty,
         "f_onset_zcr_ratio": round(f_onset_zcr_ratio, 4),
