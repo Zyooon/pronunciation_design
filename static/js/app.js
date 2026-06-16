@@ -8,6 +8,7 @@ let recordedBlob      = null;         // Blob | null
 let uploadedFile      = null;         // File | null
 let allWords          = [];           // 전체 단어 목록 (발음 필터링용)
 let selectedTestLabel = "unlabeled";  // 테스트 라벨 (ENABLE_TEST_LABELS=true 시 사용)
+let metricRadarChart  = null;         // Chart.js 레이더 차트 인스턴스
 
 // ── DOM 참조 ──────────────────────────────────────────
 const phonemeSelect    = document.getElementById("phoneme-select");
@@ -330,10 +331,10 @@ function showResult(result) {
   const scoreCard = document.getElementById("score-card");
   scoreCard.className = `score-card ${gradeClass}`;
 
-  renderMetrics(result.details || {});
-
-  // 숨겨진 상태에서 표시 → 애니메이션 트리거
+  // canvas 크기를 계산하려면 먼저 표시 상태여야 한다
   resultSection.style.display = "block";
+
+  renderMetrics(result.details || {});
 
   // 점수 카운트업 + 스크롤
   animateScoreNumber(0, Math.round(score), 700);
@@ -370,43 +371,65 @@ function animateScoreNumber(from, to, durationMs) {
 
 function renderMetrics(details) {
   const card = document.getElementById("metrics-card");
-  const labelMap = {
-    mfcc_score:              "MFCC",
-    duration_score:          "Duration",
-    rms_score:               "RMS",
-    zcr_score:               "ZCR",
-    spectral_centroid_score: "Spectral",
-  };
 
-  const entries = Object.entries(labelMap).filter(([key]) => details[key] != null);
+  const METRIC_SPECS = [
+    { key: "mfcc_score",              label: "MFCC" },
+    { key: "duration_score",          label: "Duration" },
+    { key: "rms_score",               label: "RMS" },
+    { key: "zcr_score",               label: "ZCR" },
+    { key: "spectral_centroid_score", label: "Spectral" },
+  ];
 
-  if (!entries.length) {
+  const validEntries = METRIC_SPECS.filter(({ key }) => details[key] != null && !Number.isNaN(details[key]));
+
+  if (metricRadarChart) {
+    metricRadarChart.destroy();
+    metricRadarChart = null;
+  }
+
+  if (!validEntries.length) {
     card.innerHTML = "";
     return;
   }
 
-  // width를 0으로 먼저 렌더링한 뒤 rAF에서 실제 값을 적용해 CSS transition을 유발한다
   card.innerHTML =
     `<div class="metrics-label">DETAILED METRICS</div>` +
-    entries.map(([key, label]) => {
-      const val = details[key];
-      return `
-        <div class="m-row">
-          <div class="m-name">${label}</div>
-          <div class="m-track"><div class="m-fill" id="mf-${key}" style="width:0%"></div></div>
-          <div class="m-val">${val}</div>
-        </div>`;
-    }).join("");
+    `<div class="metrics-chart-wrap"><canvas id="metrics-radar-chart"></canvas></div>`;
 
-  // 두 프레임 뒤에 실제 너비 적용 → transition 발동
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      entries.forEach(([key]) => {
-        const el = document.getElementById(`mf-${key}`);
-        if (el) el.style.width = `${details[key]}%`;
-      });
-    });
-  });
+  const labels = validEntries.map(({ label }) => label);
+  const values = validEntries.map(({ key }) => Number(details[key]));
+
+  metricRadarChart = new Chart(
+    document.getElementById("metrics-radar-chart"),
+    {
+      type: "radar",
+      data: {
+        labels,
+        datasets: [{
+          data: values,
+          backgroundColor: "rgba(59,130,246,0.18)",
+          borderColor: "#3b82f6",
+          borderWidth: 2.5,
+          pointBackgroundColor: "#3b82f6",
+          pointRadius: 3,
+        }],
+      },
+      options: {
+        animation: { duration: 600 },
+        scales: {
+          r: {
+            min: 0,
+            max: 100,
+            ticks: { stepSize: 25, font: { size: 10 }, color: "#94a3b8" },
+            pointLabels: { font: { size: 11, weight: "600" }, color: "#475569" },
+            grid: { color: "#e2e8f0" },
+            angleLines: { color: "#e2e8f0" },
+          },
+        },
+        plugins: { legend: { display: false } },
+      },
+    }
+  );
 }
 
 // ── 상태 초기화 ───────────────────────────────────────

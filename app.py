@@ -1,5 +1,4 @@
 import csv
-import html as _html
 import json
 import math
 import re
@@ -10,7 +9,6 @@ from pathlib import Path
 from typing import Any, Generator
 
 import plotly.graph_objects as go
-import plotly.io as pio
 
 import gradio as gr
 
@@ -246,30 +244,6 @@ def _build_radar_figure(details: dict[str, Any]) -> go.Figure | None:
         height=300,
     )
     return fig
-
-
-def _render_radar_chart_div(details: dict[str, Any]) -> str:
-    """결과 화면 카드 안에 삽입할 Plotly 방사형 차트 iframe을 생성한다.
-
-    None/NaN 점수는 100.0(Pass 더미)으로 치환하고 라벨에 '(제외)'를 붙인다.
-    유효한 점수가 하나도 없으면 빈 문자열을 반환한다.
-    iframe srcdoc 방식으로 임베드해 Plotly.js 스크립트가 iframe 내부에서 실행된다.
-    """
-    if not any(not _is_invalid_score(details.get(key)) for key, _ in _RADAR_SCORE_SPECS):
-        return ""
-    fig = _build_radar_figure(details)
-    if fig is None:
-        return ""
-    chart_html = pio.to_html(fig, include_plotlyjs="cdn", full_html=True)
-    srcdoc = _html.escape(chart_html, quote=True)
-    return (
-        '<div class="metrics-card">'
-        '<div class="card-lbl">발음 능력치 레이더</div>'
-        f'<iframe srcdoc="{srcdoc}" '
-        f'style="width:100%;height:300px;border:none;display:block;" '
-        f'scrolling="no" frameborder="0"></iframe>'
-        '</div>'
-    )
 
 
 def ensure_results_csv() -> None:
@@ -555,7 +529,6 @@ def render_result_content(target: TargetWord, result: dict[str, Any], reference:
       <div class="card-body">{feedback}</div>
     </div>
     {_render_metric_rows(details)}
-    {_render_radar_chart_div(details)}
     {comparison_html}
     {onset_html}
     """
@@ -599,11 +572,13 @@ def refresh_analysis_options() -> tuple:
 
 
 def analyze_pronunciation(target_id: str, audio_file: str | None) -> Generator:
+    _no_radar = gr.update(value=None, visible=False)
+
     if not audio_file:
-        yield gr.update(visible=True), gr.update(visible=False), "", "음성을 녹음하거나 파일을 업로드해주세요."
+        yield gr.update(visible=True), gr.update(visible=False), "", "음성을 녹음하거나 파일을 업로드해주세요.", _no_radar
         return
 
-    yield gr.update(visible=False), gr.update(visible=True), _LOADING_HTML, ""
+    yield gr.update(visible=False), gr.update(visible=True), _LOADING_HTML, "", _no_radar
 
     try:
         target, reference = get_reference_for_target_id(
@@ -639,18 +614,33 @@ def analyze_pronunciation(target_id: str, audio_file: str | None) -> Generator:
             features=features,
             recording_path=standardized_recording_path,
         )
-        yield gr.update(visible=False), gr.update(visible=True), render_result_content(target, result, reference), ""
+        fig = _build_radar_figure(result.get("details", {}))
+        yield (
+            gr.update(visible=False),
+            gr.update(visible=True),
+            render_result_content(target, result, reference),
+            "",
+            gr.update(value=fig, visible=fig is not None),
+        )
     except Exception as exc:
         yield (
             gr.update(visible=False),
             gr.update(visible=True),
             f'<div class="loading-wrap"><div class="loading-text">오류: {type(exc).__name__} — {exc}</div></div>',
             "",
+            _no_radar,
         )
 
 
 def try_again(target_id: str) -> tuple:
-    return gr.update(visible=True), gr.update(visible=False), render_practice_header(target_id), None, ""
+    return (
+        gr.update(visible=True),
+        gr.update(visible=False),
+        render_practice_header(target_id),
+        None,
+        "",
+        gr.update(value=None, visible=False),
+    )
 
 
 def change_word() -> tuple:
@@ -701,6 +691,7 @@ def build_practice_tab() -> None:
 
         with gr.Column(visible=False, elem_id="screen_result", elem_classes=["screen-card"]) as screen_result:
             result_content = gr.HTML("")
+            radar_plot_output = gr.Plot(label="발음 능력치 밸런스", visible=False)
             with gr.Row(elem_classes=["actions"]):
                 try_again_btn = gr.Button("Try Again", elem_id="btn-try-again", variant="secondary")
                 change_word_btn = gr.Button("Change Word", elem_id="btn-change-word", variant="primary")
@@ -715,12 +706,12 @@ def build_practice_tab() -> None:
         analyze_btn.click(
             fn=analyze_pronunciation,
             inputs=[target_dropdown, audio_input],
-            outputs=[screen_practice, screen_result, result_content, practice_status],
+            outputs=[screen_practice, screen_result, result_content, practice_status, radar_plot_output],
         )
         try_again_btn.click(
             fn=try_again,
             inputs=[target_dropdown],
-            outputs=[screen_practice, screen_result, practice_header, audio_input, practice_status],
+            outputs=[screen_practice, screen_result, practice_header, audio_input, practice_status, radar_plot_output],
         )
         change_word_btn.click(
             fn=change_word,

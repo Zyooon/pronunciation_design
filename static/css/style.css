@@ -624,6 +624,12 @@ body {
 
 .metrics-card:empty { display: none; }
 
+.metrics-chart-wrap {
+  height: 260px;
+  position: relative;
+  margin-top: 8px;
+}
+
 .metrics-label {
   font-size: 10px;
   font-weight: 700;
