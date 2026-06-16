@@ -1,11 +1,16 @@
 import csv
+import html as _html
 import json
+import math
 import re
 import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Generator
+
+import plotly.graph_objects as go
+import plotly.io as pio
 
 import gradio as gr
 
@@ -167,6 +172,104 @@ _SCORE_METRIC_DEFINITIONS = (
         "소리의 밝기와 주파수 중심이 원어민 기준과 얼마나 가까운지 봅니다.",
     ),
 )
+
+
+_RADAR_SCORE_SPECS: tuple[tuple[str, str], ...] = (
+    ("mfcc_score",             "음색 (MFCC)"),
+    ("duration_score",          "박자 (Duration)"),
+    ("rms_score",               "음량/강세 (RMS)"),
+    ("zcr_score",               "자음 명확도 (ZCR)"),
+    ("spectral_centroid_score", "맑기 (Spectral)"),
+)
+
+
+
+def _is_invalid_score(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        return math.isnan(float(value))
+    except (TypeError, ValueError):
+        return True
+
+
+def _build_radar_scores_and_labels(
+    scores: dict[str, Any],
+) -> tuple[list[float], list[str]]:
+    """5대 지표를 순회하며 None/NaN 점수를 100.0 더미로 치환하고 라벨에 '(제외)'를 붙인다."""
+    values: list[float] = []
+    labels: list[str] = []
+    for key, base_label in _RADAR_SCORE_SPECS:
+        raw = scores.get(key)
+        if _is_invalid_score(raw):
+            values.append(100.0)
+            short_name = base_label.split(" (")[0]
+            labels.append(f"{short_name} (제외)")
+        else:
+            values.append(float(raw))
+            labels.append(base_label)
+    return values, labels
+
+
+def _build_radar_figure(details: dict[str, Any]) -> go.Figure | None:
+    """메인 결과 화면용 Plotly 방사형 차트를 생성한다.
+
+    None/NaN 점수는 100.0(Pass 더미)으로 치환하고 라벨에 '(제외)'를 붙인다.
+    5개 지표 모두 유효하지 않으면 None을 반환한다.
+    """
+    if not any(not _is_invalid_score(details.get(key)) for key, _ in _RADAR_SCORE_SPECS):
+        return None
+    values, labels = _build_radar_scores_and_labels(details)
+    theta = labels + [labels[0]]
+    r = values + [values[0]]
+    fig = go.Figure(go.Scatterpolar(
+        r=r,
+        theta=theta,
+        fill="toself",
+        fillcolor="rgba(59,130,246,0.18)",
+        line={"color": "#3b82f6", "width": 2.5},
+    ))
+    fig.update_layout(
+        polar={
+            "radialaxis": {
+                "range": [0, 100],
+                "tickvals": [20, 40, 60, 80, 100],
+                "tickfont": {"size": 10, "color": "#94a3b8"},
+                "gridcolor": "rgba(148,163,184,0.3)",
+            },
+            "angularaxis": {"gridcolor": "rgba(148,163,184,0.4)"},
+            "bgcolor": "rgba(0,0,0,0)",
+        },
+        showlegend=False,
+        margin={"l": 60, "r": 60, "t": 30, "b": 30},
+        paper_bgcolor="rgba(0,0,0,0)",
+        height=300,
+    )
+    return fig
+
+
+def _render_radar_chart_div(details: dict[str, Any]) -> str:
+    """결과 화면 카드 안에 삽입할 Plotly 방사형 차트 iframe을 생성한다.
+
+    None/NaN 점수는 100.0(Pass 더미)으로 치환하고 라벨에 '(제외)'를 붙인다.
+    유효한 점수가 하나도 없으면 빈 문자열을 반환한다.
+    iframe srcdoc 방식으로 임베드해 Plotly.js 스크립트가 iframe 내부에서 실행된다.
+    """
+    if not any(not _is_invalid_score(details.get(key)) for key, _ in _RADAR_SCORE_SPECS):
+        return ""
+    fig = _build_radar_figure(details)
+    if fig is None:
+        return ""
+    chart_html = pio.to_html(fig, include_plotlyjs="cdn", full_html=True)
+    srcdoc = _html.escape(chart_html, quote=True)
+    return (
+        '<div class="metrics-card">'
+        '<div class="card-lbl">발음 능력치 레이더</div>'
+        f'<iframe srcdoc="{srcdoc}" '
+        f'style="width:100%;height:300px;border:none;display:block;" '
+        f'scrolling="no" frameborder="0"></iframe>'
+        '</div>'
+    )
 
 
 def ensure_results_csv() -> None:
@@ -452,6 +555,7 @@ def render_result_content(target: TargetWord, result: dict[str, Any], reference:
       <div class="card-body">{feedback}</div>
     </div>
     {_render_metric_rows(details)}
+    {_render_radar_chart_div(details)}
     {comparison_html}
     {onset_html}
     """

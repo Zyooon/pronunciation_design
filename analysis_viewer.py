@@ -6,9 +6,13 @@
 
 import json
 import logging
+import math
 import sqlite3
 from pathlib import Path
 from typing import Any
+
+import plotly.graph_objects as go
+import plotly.io as pio
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -139,6 +143,17 @@ async def get_recording_audio(recording_id: int) -> FileResponse:
     if file_path is None or not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="recording 파일을 찾을 수 없습니다.")
     return FileResponse(file_path, media_type=guess_audio_media_type(file_path), filename=file_path.name)
+
+
+@app.get("/api/word-compare-radar/{recording_id}")
+async def get_word_compare_radar_chart(recording_id: int) -> Response:
+    """Word Compare 탭 유저 방사형 차트 HTML을 Plotly로 생성해 반환한다."""
+    row = load_recording_scores_by_id(DB_PATH, recording_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="녹음 row를 찾을 수 없습니다.")
+    merged = _merge_details_json(dict(row))
+    radar_html = build_word_compare_radar_html(merged, "사용자 발음")
+    return _json_response({"radar_html": radar_html, "recording_id": recording_id})
 
 
 @app.post("/api/user-label/{recording_id}")
@@ -644,6 +659,109 @@ def _round_or_none(value: Any, ndigits: int = 2) -> float | None:
     try:
         return round(float(value), ndigits)
     except (TypeError, ValueError):
+        return None
+
+
+_RADAR_SCORE_SPECS: tuple[tuple[str, str], ...] = (
+    ("mfcc_score",             "음색 (MFCC)"),
+    ("duration_score",          "박자 (Duration)"),
+    ("rms_score",               "음량/강세 (RMS)"),
+    ("zcr_score",               "자음 명확도 (ZCR)"),
+    ("spectral_centroid_score", "맑기 (Spectral)"),
+)
+
+
+def _is_invalid_score(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        return math.isnan(float(value))
+    except (TypeError, ValueError):
+        return True
+
+
+def _build_radar_scores_and_labels(
+    scores: dict[str, Any],
+) -> tuple[list[float], list[str]]:
+    """5대 지표를 순회하며 None/NaN 점수를 100.0 더미로 치환하고 라벨에 '(제외)'를 붙인다."""
+    values: list[float] = []
+    labels: list[str] = []
+    for key, base_label in _RADAR_SCORE_SPECS:
+        raw = scores.get(key)
+        if _is_invalid_score(raw):
+            values.append(100.0)
+            short_name = base_label.split(" (")[0]
+            labels.append(f"{short_name} (제외)")
+        else:
+            values.append(float(raw))
+            labels.append(base_label)
+    return values, labels
+
+
+def build_word_compare_radar_html(scores: dict[str, Any], title: str = "") -> str:
+    """Word Compare 탭 유저 방사형 차트 HTML을 Plotly로 생성한다.
+
+    None/NaN 점수는 100.0(Pass 더미)으로 치환하고 라벨에 '(제외)'를 붙인다.
+    5개 지표 모두 유효하지 않으면 빈 문자열을 반환한다.
+    """
+    has_any_valid = any(not _is_invalid_score(scores.get(key)) for key, _ in _RADAR_SCORE_SPECS)
+    if not has_any_valid:
+        return ""
+    values, labels = _build_radar_scores_and_labels(scores)
+    theta = labels + [labels[0]]
+    r = values + [values[0]]
+    fig = go.Figure(go.Scatterpolar(
+        r=r,
+        theta=theta,
+        fill="toself",
+        fillcolor="rgba(59,130,246,0.18)",
+        line={"color": "#3b82f6", "width": 2.5},
+        name=title,
+    ))
+    fig.update_layout(
+        polar={
+            "radialaxis": {
+                "range": [0, 100],
+                "tickvals": [20, 40, 60, 80, 100],
+                "tickfont": {"size": 10, "color": "#94a3b8"},
+                "gridcolor": "rgba(148,163,184,0.3)",
+            },
+            "angularaxis": {"gridcolor": "rgba(148,163,184,0.4)"},
+            "bgcolor": "rgba(0,0,0,0)",
+        },
+        showlegend=bool(title),
+        margin={"l": 60, "r": 60, "t": 40, "b": 40},
+        paper_bgcolor="rgba(0,0,0,0)",
+        height=320,
+        title={"text": title, "font": {"size": 13, "color": "#16324f"}} if title else None,
+    )
+    return pio.to_html(fig, include_plotlyjs="cdn", full_html=False)
+
+
+def load_recording_scores_by_id(db_path: Path, recording_id: int) -> dict[str, Any] | None:
+    """recording_id로 score 컬럼과 details_json을 조회한다."""
+    if not db_path.exists():
+        return None
+    score_cols = [
+        "id", "word", "phoneme",
+        "mfcc_score", "duration_score", "rms_score", "zcr_score",
+        "spectral_centroid_score", "details_json",
+    ]
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            available = {
+                r["name"]
+                for r in conn.execute(f"PRAGMA table_info({USER_RECORDINGS_TABLE})")
+            }
+            select_cols = [c for c in score_cols if c in available]
+            row = conn.execute(
+                f"SELECT {', '.join(select_cols)} FROM {USER_RECORDINGS_TABLE} WHERE id = ?",
+                (recording_id,),
+            ).fetchone()
+        return dict(row) if row else None
+    except sqlite3.Error as exc:
+        log.warning("score 조회 실패: recording_id=%s, error=%s", recording_id, exc)
         return None
 
 
