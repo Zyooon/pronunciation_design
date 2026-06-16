@@ -405,9 +405,17 @@ def compute_pronunciation_penalty(sub_scores: dict[str, float], phoneme_type: st
         penalty += 8.0 if phoneme_type == "vowel" else 4.0
         if phoneme_type == "vowel" and duration_score < _DURATION_VERY_LOW_THRESHOLD:
             penalty += 3.0
-    if centroid_score < _CENTROID_LOW_THRESHOLD and phoneme_type != "vowel":
+    centroid_is_low = centroid_score < _CENTROID_LOW_THRESHOLD
+    zcr_is_low = zcr_score < _ZCR_LOW_THRESHOLD
+
+    if phoneme == "f":
+        # /f/는 후행 자음 환경에서 centroid가 왜곡될 수 있으므로 ZCR과 AND 교차 검증
+        if centroid_is_low and zcr_is_low:
+            penalty += 3.0
+    elif centroid_is_low and phoneme_type != "vowel":
         penalty += 3.0
-    if phoneme_type == "consonant" and zcr_score < _ZCR_LOW_THRESHOLD:
+
+    if phoneme_type == "consonant" and zcr_is_low:
         penalty += 4.0
     return round(float(penalty), 1)
 
@@ -562,6 +570,19 @@ def _get_liquid_acoustic_metrics(phoneme: str, user_features: AudioFeatures) -> 
     return compute_liquid_acoustic_penalty(user_features, phoneme)
 
 
+def _apply_f_korean_like_penalty_adjustment(
+    phoneme: str,
+    korean_pattern_status: str,
+    centroid_is_low: bool,
+    zcr_is_low: bool,
+    base_penalty: float,
+) -> float:
+    """/f/ 한국어식 오독이 경계선일 때 물리 지표 교차 검증 후 1.5점 추가 감점."""
+    if phoneme == "f" and korean_pattern_status == "borderline_korean_like" and centroid_is_low and zcr_is_low:
+        return base_penalty + 1.5
+    return base_penalty
+
+
 def score_pronunciation(
     user_features: AudioFeatures,
     reference: ReferenceVector,
@@ -577,6 +598,8 @@ def score_pronunciation(
     phoneme_type = str(reference.get("phoneme_type", "unknown"))
     sub_scores = _build_phoneme_score_details(user_features, reference, phoneme_type, phoneme)
     base_score = float(sub_scores.pop("score"))
+    centroid_is_low = sub_scores.get("spectral_centroid_score", 100.0) < _CENTROID_LOW_THRESHOLD
+    zcr_is_low = sub_scores.get("zcr_score", 100.0) < _ZCR_LOW_THRESHOLD
 
     duration_ms = float(user_features.get("duration_ms", 0))
     rms_mean = float(user_features.get("rms_mean", 0))
@@ -591,6 +614,10 @@ def score_pronunciation(
     schwa_metrics = compute_schwa_overstress_metrics(user_features, reference, phoneme)
 
     korean_like_penalty = float(ko_metrics.get("korean_like_penalty") or 0.0)
+    korean_pattern_status = str(ko_metrics.get("korean_pattern_status", ""))
+    korean_like_penalty = _apply_f_korean_like_penalty_adjustment(
+        phoneme, korean_pattern_status, centroid_is_low, zcr_is_low, korean_like_penalty
+    )
     liquid_alt_penalty = float(liquid_alt_metrics.get("liquid_alt_penalty") or 0.0)
     liquid_onset_penalty = float(liquid_alt_metrics.get("liquid_onset_penalty") or 0.0)
     liquid_acoustic_penalty = float(liquid_acoustic_metrics.get("liquid_acoustic_penalty") or 0.0)
