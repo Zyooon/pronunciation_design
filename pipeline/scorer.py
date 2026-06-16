@@ -16,6 +16,7 @@ _LIQUID_PHONEMES: frozenset[str] = frozenset({"r", "l"})
 _DURATION_FOCUSED_PHONEMES: frozenset[str] = frozenset({"i", "iː"})
 _KO_REFERENCE_PHONEMES: frozenset[str] = frozenset({"θ", "v", "æ", "f"})
 _SCHWA_PHONEMES: frozenset[str] = frozenset({"ə"})
+_VOWEL_PHONEMES: frozenset[str] = frozenset({"i", "iː", "æ", "ə", "oʊ"})
 
 _MFCC_LOW_THRESHOLD = 55.0
 _DURATION_LOW_THRESHOLD = 45.0
@@ -404,7 +405,7 @@ def compute_pronunciation_penalty(sub_scores: dict[str, float], phoneme_type: st
         penalty += 8.0 if phoneme_type == "vowel" else 4.0
         if phoneme_type == "vowel" and duration_score < _DURATION_VERY_LOW_THRESHOLD:
             penalty += 3.0
-    if centroid_score < _CENTROID_LOW_THRESHOLD:
+    if centroid_score < _CENTROID_LOW_THRESHOLD and phoneme_type != "vowel":
         penalty += 3.0
     if phoneme_type == "consonant" and zcr_score < _ZCR_LOW_THRESHOLD:
         penalty += 4.0

@@ -278,11 +278,10 @@
         <div class="word-compare-section-head">
           <div>
             <h3>ElevenLabs 기준 점수</h3>
-            <p>scorer가 ElevenLabs reference와 비교해 계산한 0~100 점수입니다. 이 섹션은 한국어식 reference 지표와 섞지 않으며, 표시된 score는 모두 높을수록 좋습니다.</p>
+            <p>발음 능력치 0~100점 · 높을수록 원어민 기준에 가깝습니다. 각 축은 음소 타입에 따라 채점에 사용된 항목만 파란색으로 표시됩니다.</p>
           </div>
-          <span class="pill pill-ok">higher is better</span>
+          <span class="pill pill-ok">높을수록 좋음</span>
         </div>
-        ${renderMfccDistanceCard(mfccDistance)}
         ${hasAnyScore ? `
           <div class="chart-box word-compare-chart-box">
             <div class="chart-title">발음 능력치 레이더 · 5대 지표 원어민 일치도 (0~100)</div>
@@ -291,6 +290,9 @@
         ` : renderNoUsedScoresNotice(row.phoneme)}
         ${unusedScores.length ? renderUnusedScoresSection(unusedScores) : ""}
         ${missingExpectedScores.length ? renderMissingExpectedScoresSection(missingExpectedScores) : ""}
+        <div style="border-top:2px dashed #e2e8f0;margin:18px 0 14px;"></div>
+        <div style="font-size:11px;font-weight:800;letter-spacing:0.08em;color:#94a3b8;text-transform:uppercase;margin-bottom:10px;">[참고 지표] 음색 거리 · 점수가 아닌 물리적 거리값</div>
+        ${renderMfccDistanceCard(mfccDistance)}
       </section>
     `;
   }
@@ -303,7 +305,7 @@
       return `
         <div class="word-compare-group-grid" style="margin-bottom:12px;">
           <div class="word-compare-card english">
-            <div class="word-compare-card-title">MFCC distance <span>${escHtml(mfccDistance.description)}</span></div>
+            <div class="word-compare-card-title">원어민 음색과의 물리적 거리 <span>MFCC Distance · 이 수치는 점수가 아닙니다</span></div>
             <div class="word-compare-korean-value" style="color:#94a3b8;">—</div>
             <p style="color:#6b7c8f;font-size:12px;line-height:1.6;">데이터 없음</p>
           </div>
@@ -344,8 +346,8 @@
       <div class="mfcc-gauge-wrap">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:14px;">
           <div>
-            <div style="font-weight:800;color:#334155;margin-bottom:3px;">MFCC distance</div>
-            <div style="font-size:11px;color:#94a3b8;">낮을수록 좋음 · 0이 이상적 · 합격선 ${MFCC_PASS_THRESHOLD} 이하</div>
+            <div style="font-weight:800;color:#334155;margin-bottom:3px;">원어민 음색과의 물리적 거리 <span style="font-size:11px;font-weight:600;color:#94a3b8;">(MFCC Distance)</span></div>
+            <div style="font-size:11px;color:#64748b;line-height:1.6;margin-top:2px;">※ 이 수치는 점수가 아닙니다 · 낮을수록 원어민 음색 템플릿에 가까운 거리 · 합격선 ${MFCC_PASS_THRESHOLD} 이하</div>
           </div>
           <div style="text-align:right;">
             <div style="font-size:26px;font-weight:800;color:${userColor};line-height:1;">${userDist.toFixed(1)}</div>
@@ -366,7 +368,7 @@
           <span style="color:${userColor};font-weight:700;">내 발음(${userDist.toFixed(1)})</span>
           ${koLegendHtml}
         </div>
-        <div style="font-size:11px;color:#94a3b8;margin-top:6px;font-style:italic;">합격 기준: ${MFCC_PASS_THRESHOLD} 이하${escHtml(koInfoText)}</div>
+        <div style="font-size:11px;color:#64748b;margin-top:6px;line-height:1.6;">※ 이 거리값은 0~100 점수와 별개이며, 위 레이더 그래프의 '음색 유사도'와 다른 지표입니다. 합격 기준: ${MFCC_PASS_THRESHOLD} 이하${escHtml(koInfoText)}</div>
       </div>
     `;
   }
@@ -532,7 +534,7 @@
   function renderScoreRadarChart(canvasId, scoreMetrics, unusedScores = []) {
     const canvas = document.getElementById(canvasId);
     if (!canvas || typeof Chart === "undefined") return;
-    const axisLabels = ["음색 (MFCC)", "박자 (Duration)", "음량/강세 (RMS)", "자음 명확도 (ZCR)", "맑기 (Spectral)"];
+    const axisLabels = ["음색 유사도(MFCC)", "박자감(Duration)", "음량 안정도(RMS)", "자음 정확도(ZCR)", "조음 선명도(Spectral)"];
     const scoreKeys = ["mfcc_score", "duration_score", "rms_score", "zcr_score", "spectral_centroid_score"];
     const unusedKeySet = new Set(unusedScores.map((m) => m.key));
     const scores = scoreKeys.map((key) => {
