@@ -625,9 +625,33 @@ body {
 .metrics-card:empty { display: none; }
 
 .metrics-chart-wrap {
-  height: 260px;
+  width: 100%;
   position: relative;
-  margin-top: 8px;
+  margin-top: 4px;
+}
+
+.metrics-desc-list {
+  margin-top: 10px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.metrics-desc-list li {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.metrics-desc-list li strong {
+  color: #334155;
+  font-weight: 700;
+  min-width: 76px;
+  flex-shrink: 0;
 }
 
 .metrics-label {

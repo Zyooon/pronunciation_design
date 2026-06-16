@@ -8,7 +8,6 @@ let recordedBlob      = null;         // Blob | null
 let uploadedFile      = null;         // File | null
 let allWords          = [];           // 전체 단어 목록 (발음 필터링용)
 let selectedTestLabel = "unlabeled";  // 테스트 라벨 (ENABLE_TEST_LABELS=true 시 사용)
-let metricRadarChart  = null;         // Chart.js 레이더 차트 인스턴스
 
 // ── DOM 참조 ──────────────────────────────────────────
 const phonemeSelect    = document.getElementById("phoneme-select");
@@ -373,62 +372,68 @@ function renderMetrics(details) {
   const card = document.getElementById("metrics-card");
 
   const METRIC_SPECS = [
-    { key: "mfcc_score",              label: "MFCC" },
-    { key: "duration_score",          label: "Duration" },
-    { key: "rms_score",               label: "RMS" },
-    { key: "zcr_score",               label: "ZCR" },
-    { key: "spectral_centroid_score", label: "Spectral" },
+    { key: "mfcc_score",              label: "음색 유사도",   desc: "기준 발음과 음색이 얼마나 비슷한지" },
+    { key: "duration_score",          label: "길이 안정성",   desc: "음절 길이 비율이 영어식에 얼마나 가까운지" },
+    { key: "rms_score",               label: "음량 안정성",   desc: "음량·강세가 영어식에 얼마나 가까운지" },
+    { key: "zcr_score",               label: "파형 변화율",   desc: "자음의 명확한 변화가 얼마나 나타나는지" },
+    { key: "spectral_centroid_score", label: "주파수 선명도", desc: "고주파 성분이 영어식에 얼마나 가까운지" },
   ];
 
-  const validEntries = METRIC_SPECS.filter(({ key }) => details[key] != null && !Number.isNaN(details[key]));
-
-  if (metricRadarChart) {
-    metricRadarChart.destroy();
-    metricRadarChart = null;
-  }
+  const validEntries = METRIC_SPECS.filter(({ key }) => {
+    const v = details[key];
+    return v != null && !Number.isNaN(Number(v));
+  });
 
   if (!validEntries.length) {
     card.innerHTML = "";
     return;
   }
 
-  card.innerHTML =
-    `<div class="metrics-label">DETAILED METRICS</div>` +
-    `<div class="metrics-chart-wrap"><canvas id="metrics-radar-chart"></canvas></div>`;
-
   const labels = validEntries.map(({ label }) => label);
   const values = validEntries.map(({ key }) => Number(details[key]));
 
-  metricRadarChart = new Chart(
-    document.getElementById("metrics-radar-chart"),
+  card.innerHTML =
+    `<div class="metrics-label">DETAILED METRICS</div>` +
+    `<div class="metrics-chart-wrap" id="metrics-radar-chart"></div>` +
+    `<ul class="metrics-desc-list">` +
+    validEntries.map(({ label, desc }) =>
+      `<li><strong>${label}</strong>${desc}</li>`
+    ).join("") +
+    `</ul>`;
+
+  Plotly.newPlot(
+    "metrics-radar-chart",
+    [{
+      type: "scatterpolar",
+      r: [...values, values[0]],
+      theta: [...labels, labels[0]],
+      fill: "toself",
+      fillcolor: "rgba(59,130,246,0.15)",
+      line: { color: "#3b82f6", width: 2.5 },
+      marker: { size: 5, color: "#3b82f6" },
+    }],
     {
-      type: "radar",
-      data: {
-        labels,
-        datasets: [{
-          data: values,
-          backgroundColor: "rgba(59,130,246,0.18)",
-          borderColor: "#3b82f6",
-          borderWidth: 2.5,
-          pointBackgroundColor: "#3b82f6",
-          pointRadius: 3,
-        }],
-      },
-      options: {
-        animation: { duration: 600 },
-        scales: {
-          r: {
-            min: 0,
-            max: 100,
-            ticks: { stepSize: 25, font: { size: 10 }, color: "#94a3b8" },
-            pointLabels: { font: { size: 11, weight: "600" }, color: "#475569" },
-            grid: { color: "#e2e8f0" },
-            angleLines: { color: "#e2e8f0" },
-          },
+      polar: {
+        radialaxis: {
+          range: [0, 100],
+          tickvals: [25, 50, 75, 100],
+          tickfont: { size: 10, color: "#94a3b8" },
+          gridcolor: "#e2e8f0",
+          linecolor: "#e2e8f0",
         },
-        plugins: { legend: { display: false } },
+        angularaxis: {
+          tickfont: { size: 11, color: "#334155" },
+          gridcolor: "#e2e8f0",
+          linecolor: "#e2e8f0",
+        },
+        bgcolor: "#ffffff",
       },
-    }
+      paper_bgcolor: "transparent",
+      margin: { t: 30, b: 30, l: 55, r: 55 },
+      showlegend: false,
+      height: 280,
+    },
+    { displayModeBar: false, responsive: true }
   );
 }
 
