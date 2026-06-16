@@ -30,6 +30,8 @@
     ["onset_spectral_centroid_mean", "Onset spectral", "자음 시작 구간의 spectral centroid 관찰값입니다."],
   ];
 
+  const MFCC_PASS_THRESHOLD = 55;
+
   const KOREAN_PATTERN_METRICS = [
     ["en_distance", "English distance", "낮을수록 영어 reference와 가깝습니다.", "lower"],
     ["ko_distance", "Korean-like distance", "낮을수록 한국어식 reference와 가깝습니다. 이 값은 점수가 아니라 거리입니다.", "lower"],
@@ -147,6 +149,7 @@
       description: "현재 녹음과 ElevenLabs reference 사이 거리입니다. 0~100 점수가 아니므로 score 그래프에는 넣지 않습니다.",
       goodDirection: "lower",
       value: numOrNull(row["mfcc_distance"]),
+      koDistance: numOrNull(row["ko_distance"]),
     };
   }
 
@@ -293,13 +296,77 @@
   }
 
   function renderMfccDistanceCard(mfccDistance) {
-    return `
-      <div class="word-compare-group-grid" style="margin-bottom:12px;">
-        <div class="word-compare-card english">
-          <div class="word-compare-card-title">MFCC distance <span>${escHtml(mfccDistance.description)}</span></div>
-          <div class="word-compare-korean-value" style="color:#1677c7;">${formatValue(mfccDistance.value)}</div>
-          <p style="color:#6b7c8f;font-size:12px;line-height:1.6;">낮을수록 좋음 · 0~100 score 아님</p>
+    const userDist = mfccDistance.value;
+    const koDist = mfccDistance.koDistance;
+
+    if (userDist == null) {
+      return `
+        <div class="word-compare-group-grid" style="margin-bottom:12px;">
+          <div class="word-compare-card english">
+            <div class="word-compare-card-title">MFCC distance <span>${escHtml(mfccDistance.description)}</span></div>
+            <div class="word-compare-korean-value" style="color:#94a3b8;">—</div>
+            <p style="color:#6b7c8f;font-size:12px;line-height:1.6;">데이터 없음</p>
+          </div>
         </div>
+      `;
+    }
+
+    const scaleMax = Math.max(userDist * 1.35, MFCC_PASS_THRESHOLD * 2, 90, koDist != null ? koDist * 1.15 : 0);
+    const thresholdPct = Math.min(97, (MFCC_PASS_THRESHOLD / scaleMax) * 100).toFixed(1);
+    const userPct = Math.min(97, (userDist / scaleMax) * 100).toFixed(1);
+
+    let userColor, gradeText;
+    if (userDist <= MFCC_PASS_THRESHOLD) {
+      userColor = "#2563eb";
+      gradeText = "합격 범위";
+    } else if (koDist != null && userDist >= koDist * 0.92) {
+      userColor = "#ef4444";
+      gradeText = "한국어식에 근접";
+    } else {
+      userColor = "#f97316";
+      gradeText = "연습 필요";
+    }
+
+    let koMarkerHtml = "";
+    let koLegendHtml = "";
+    let koInfoText = "";
+    if (koDist != null) {
+      const koPct = Math.min(97, (koDist / scaleMax) * 100).toFixed(1);
+      koMarkerHtml = `
+        <div style="position:absolute;left:${koPct}%;top:-3px;bottom:-3px;width:2px;background:#f97316;border-radius:1px;opacity:0.85;"></div>
+        <div style="position:absolute;left:${koPct}%;top:-18px;transform:translateX(-50%);font-size:10px;font-weight:800;color:#f97316;white-space:nowrap;">KO ${koDist.toFixed(1)}</div>
+      `;
+      koLegendHtml = `<span style="color:#f97316;font-weight:700;">한국어식 기준 ${koDist.toFixed(1)}</span>`;
+      koInfoText = ` · 한국어식 기준: ${koDist.toFixed(1)}`;
+    }
+
+    return `
+      <div class="mfcc-gauge-wrap">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:14px;">
+          <div>
+            <div style="font-weight:800;color:#334155;margin-bottom:3px;">MFCC distance</div>
+            <div style="font-size:11px;color:#94a3b8;">낮을수록 좋음 · 0이 이상적 · 합격선 ${MFCC_PASS_THRESHOLD} 이하</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:26px;font-weight:800;color:${userColor};line-height:1;">${userDist.toFixed(1)}</div>
+            <div style="font-size:11px;font-weight:700;color:${userColor};margin-top:3px;">${escHtml(gradeText)}</div>
+          </div>
+        </div>
+        <div style="position:relative;height:22px;margin:24px 0 8px;">
+          <div style="position:absolute;left:0;right:0;top:0;bottom:0;background:linear-gradient(to right,#bfdbfe 0%,#fed7aa 100%);border-radius:11px;"></div>
+          <div style="position:absolute;left:0;top:0;bottom:0;width:${userPct}%;background:linear-gradient(to right,#3b82f6,${userColor});opacity:0.5;border-radius:11px 0 0 11px;"></div>
+          <div style="position:absolute;left:${thresholdPct}%;top:-3px;bottom:-3px;width:3px;background:#10b981;border-radius:2px;opacity:0.9;"></div>
+          <div style="position:absolute;left:${thresholdPct}%;bottom:26px;transform:translateX(-50%);font-size:10px;font-weight:800;color:#10b981;white-space:nowrap;">합격선 ${MFCC_PASS_THRESHOLD}</div>
+          ${koMarkerHtml}
+          <div style="position:absolute;left:${userPct}%;top:50%;transform:translate(-50%,-50%);font-size:20px;line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.2));z-index:2;">🎯</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;font-size:11px;margin-top:4px;">
+          <span style="color:#3b82f6;font-weight:700;">원어민(0)</span>
+          <span style="color:#10b981;font-weight:700;">합격선(${MFCC_PASS_THRESHOLD})</span>
+          <span style="color:${userColor};font-weight:700;">내 발음(${userDist.toFixed(1)})</span>
+          ${koLegendHtml}
+        </div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:6px;font-style:italic;">합격 기준: ${MFCC_PASS_THRESHOLD} 이하${escHtml(koInfoText)}</div>
       </div>
     `;
   }

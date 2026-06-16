@@ -11,6 +11,8 @@ from pipeline.db import DEFAULT_DB_PATH
 ReferenceVector = dict[str, float | list[float] | str]
 FeatureDict = dict[str, Any]
 
+_MFCC_PASS_THRESHOLD = 55.0
+
 _COMPARISON_METRICS = (
     ("duration_ms", "Duration", "ms", "duration_ms"),
     ("zcr_mean", "ZCR", "", "zcr_mean"),
@@ -95,6 +97,7 @@ def build_reference_comparison(
 
     mfcc_distance = compute_mfcc_distance(user_features.get("mfcc_mean"), reference.get("mfcc_mean"))
     if mfcc_distance is not None:
+        ko_distance = _safe_float(user_features.get("ko_distance"))
         rows.append(
             {
                 "key": "mfcc_distance",
@@ -106,9 +109,90 @@ def build_reference_comparison(
                 "ratio": None,
                 "user_width": min(100.0, mfcc_distance),
                 "reference_width": 0.0,
+                "ko_distance": ko_distance,
             }
         )
     return rows
+
+
+def _render_mfcc_distance_gauge(row: dict[str, Any]) -> str:
+    """MFCC distance를 원어민 합격선·한국어식 기준점과 함께 게이지로 렌더링한다."""
+    user_dist = row["user_value"]
+    ko_dist = row.get("ko_distance")
+
+    scale_max = max(user_dist * 1.35, _MFCC_PASS_THRESHOLD * 2.0, 90.0)
+    if ko_dist is not None:
+        scale_max = max(scale_max, ko_dist * 1.15)
+
+    threshold_pct = min(97.0, _MFCC_PASS_THRESHOLD / scale_max * 100)
+    user_pct = min(97.0, user_dist / scale_max * 100)
+
+    if user_dist <= _MFCC_PASS_THRESHOLD:
+        user_color = "#2563eb"
+        grade_text = "합격 범위"
+    elif ko_dist is not None and user_dist >= ko_dist * 0.92:
+        user_color = "#ef4444"
+        grade_text = "한국어식에 근접"
+    else:
+        user_color = "#f97316"
+        grade_text = "연습 필요"
+
+    ko_marker_html = ""
+    ko_legend_html = ""
+    ko_info_text = ""
+    if ko_dist is not None:
+        ko_pct = min(97.0, ko_dist / scale_max * 100)
+        ko_marker_html = (
+            f'<div style="position:absolute;left:{ko_pct:.1f}%;top:-3px;bottom:-3px;'
+            f'width:2px;background:#f97316;border-radius:1px;opacity:0.85;"></div>'
+            f'<div style="position:absolute;left:{ko_pct:.1f}%;top:-18px;'
+            f'transform:translateX(-50%);font-size:10px;font-weight:800;color:#f97316;'
+            f'white-space:nowrap;">KO {ko_dist:.1f}</div>'
+        )
+        ko_legend_html = (
+            f'<span style="color:#f97316;font-weight:700;">한국어식 기준 {ko_dist:.1f}</span>'
+        )
+        ko_info_text = f" · 한국어식 기준: {ko_dist:.1f}"
+
+    return (
+        f'<div style="border-top:1px solid #e2e8f0;padding:16px 0 10px;">'
+        f'<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:14px;">'
+        f'<div>'
+        f'<div style="font-weight:800;color:#334155;margin-bottom:3px;">MFCC distance</div>'
+        f'<div style="font-size:11px;color:#94a3b8;">낮을수록 좋음 · 0이 이상적 · 합격선 {_MFCC_PASS_THRESHOLD:.0f} 이하</div>'
+        f'</div>'
+        f'<div style="text-align:right;">'
+        f'<div style="font-size:26px;font-weight:800;color:{user_color};line-height:1;">{user_dist:.1f}</div>'
+        f'<div style="font-size:11px;font-weight:700;color:{user_color};margin-top:3px;">{grade_text}</div>'
+        f'</div>'
+        f'</div>'
+        f'<div style="position:relative;height:22px;margin:20px 0 8px;">'
+        f'<div style="position:absolute;left:0;right:0;top:0;bottom:0;'
+        f'background:linear-gradient(to right,#bfdbfe 0%,#fed7aa 100%);border-radius:11px;"></div>'
+        f'<div style="position:absolute;left:0;top:0;bottom:0;width:{user_pct:.1f}%;'
+        f'background:linear-gradient(to right,#3b82f6,{user_color});opacity:0.5;border-radius:11px 0 0 11px;"></div>'
+        f'<div style="position:absolute;left:{threshold_pct:.1f}%;top:-3px;bottom:-3px;'
+        f'width:3px;background:#10b981;border-radius:2px;opacity:0.9;"></div>'
+        f'<div style="position:absolute;left:{threshold_pct:.1f}%;bottom:26px;'
+        f'transform:translateX(-50%);font-size:10px;font-weight:800;color:#10b981;white-space:nowrap;">'
+        f'합격선 {_MFCC_PASS_THRESHOLD:.0f}</div>'
+        f'{ko_marker_html}'
+        f'<div style="position:absolute;left:{user_pct:.1f}%;top:50%;'
+        f'transform:translate(-50%,-50%);font-size:20px;line-height:1;'
+        f'filter:drop-shadow(0 1px 3px rgba(0,0,0,0.2));z-index:2;">🎯</div>'
+        f'</div>'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;'
+        f'flex-wrap:wrap;gap:4px;font-size:11px;margin-top:4px;">'
+        f'<span style="color:#3b82f6;font-weight:700;">원어민(0)</span>'
+        f'<span style="color:#10b981;font-weight:700;">합격선({_MFCC_PASS_THRESHOLD:.0f})</span>'
+        f'<span style="color:{user_color};font-weight:700;">내 발음({user_dist:.1f})</span>'
+        f'{ko_legend_html}'
+        f'</div>'
+        f'<div style="font-size:11px;color:#94a3b8;margin-top:6px;font-style:italic;">'
+        f'합격 기준: {_MFCC_PASS_THRESHOLD:.0f} 이하{ko_info_text}'
+        f'</div>'
+        f'</div>'
+    )
 
 
 def _render_pair_bar(row: dict[str, Any]) -> str:
@@ -149,7 +233,10 @@ def render_reference_comparison_html(
     rows = build_reference_comparison(user_features, reference)
     if not rows:
         return ""
-    rendered_rows = "".join(_render_pair_bar(row) for row in rows)
+    rendered_rows = "".join(
+        _render_mfcc_distance_gauge(row) if row["key"] == "mfcc_distance" else _render_pair_bar(row)
+        for row in rows
+    )
     return f"""
     <div class="metrics-card">
       <div class="card-lbl">{title}</div>

@@ -10,6 +10,7 @@ from typing import Any, Generator
 import gradio as gr
 
 from pipeline.audio import load_trimmed_audio
+from pipeline.liquid_features import LIQUID_PHONEMES, extract_liquid_acoustic_features
 from pipeline.compare import (
     list_recording_choices,
     render_onset_analysis_html,
@@ -509,6 +510,8 @@ def analyze_pronunciation(target_id: str, audio_file: str | None) -> Generator:
         waveform, sample_rate = load_trimmed_audio(audio_file)
         include_onset = should_extract_onset(target.word, target.phoneme, WORD_TARGETS)
         features = extract_features(waveform, sample_rate, include_onset=include_onset)
+        if target.phoneme in LIQUID_PHONEMES:
+            features.update(extract_liquid_acoustic_features(waveform, sample_rate))
         attach_word_target_features(features, target.word, target.phoneme, WORD_TARGETS)
         quality_result = evaluate_recording_quality(
             features=features,

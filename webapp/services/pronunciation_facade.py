@@ -7,6 +7,7 @@ import numpy as np
 
 from pipeline.audio import load_trimmed_audio
 from pipeline.features import extract_features
+from pipeline.liquid_features import LIQUID_PHONEMES, extract_liquid_acoustic_features
 from pipeline.reference import load_reference_vectors
 from pipeline.scorer import score_pronunciation
 from webapp.schemas.pronunciation import AnalysisResultDto, WordDto
@@ -106,6 +107,8 @@ def analyze_audio_with_features(
     ko_reference = ko_reference_vectors.get(phoneme)
     waveform, sr = load_trimmed_audio(audio_path)
     features = extract_features(waveform, sr)
+    if phoneme in LIQUID_PHONEMES:
+        features.update(extract_liquid_acoustic_features(waveform, sr))
     score_result = score_pronunciation(
         user_features=features,
         reference=reference,
