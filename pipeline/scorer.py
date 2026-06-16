@@ -373,7 +373,7 @@ def score_liquid(user_features: AudioFeatures, reference: ReferenceVector) -> di
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     zcr_score = zcr_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
-    final_score = mfcc_score * 0.70 + duration_score * 0.15 + centroid_score * 0.10 + zcr_score * 0.05
+    final_score = mfcc_score * 0.75 + duration_score * 0.15 + centroid_score * 0.10
 
     return _round_sub_scores(
         score=final_score,
@@ -381,6 +381,7 @@ def score_liquid(user_features: AudioFeatures, reference: ReferenceVector) -> di
         duration_score=duration_score,
         spectral_centroid_score=centroid_score,
         zcr_score=zcr_score,
+        liquid_zcr_score_weight=0.0,
     )
 
 
