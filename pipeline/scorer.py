@@ -14,7 +14,7 @@ ScoreDetailValue = float | str | list[str] | bool | None
 
 _LIQUID_PHONEMES: frozenset[str] = frozenset({"r", "l"})
 _DURATION_FOCUSED_PHONEMES: frozenset[str] = frozenset({"i", "iː"})
-_KO_REFERENCE_PHONEMES: frozenset[str] = frozenset({"θ", "v", "æ", "f"})
+_KO_REFERENCE_PHONEMES: frozenset[str] = frozenset({"θ", "v", "æ", "f", "i"})
 _SCHWA_PHONEMES: frozenset[str] = frozenset({"ə"})
 _VOWEL_PHONEMES: frozenset[str] = frozenset({"i", "iː", "æ", "ə", "oʊ"})
 
@@ -60,6 +60,11 @@ _F_ONSET_MFCC_DISTANCE_THRESHOLD = 20.0
 
 # good/road(≈0.0017) 대비 korean_like/road(0.0001~0.0002)의 8~10배 격차를 이용한 핀셋 조건
 _R_MICRO_F3_TO_LOW_THRESHOLD = 0.0003
+
+# /i/ 불파음화·이중모음 전이 지연 복합 탐지 임계값
+# good/ship: ZCR < 0.24 유지 → 그물망 Bypass / korean_like: Duration ≥ 345ms AND ZCR ≥ 0.24 동시 발생
+_VOWEL_I_DURATION_THRESHOLD = 345.0
+_VOWEL_I_ZCR_THRESHOLD = 0.24
 
 _QUALITY_GATE_FEEDBACK = "녹음 품질이 낮아 발음 점수를 신뢰하기 어렵습니다. 다시 녹음해주세요."
 _WORD_MISMATCH_FEEDBACK = "녹음된 단어가 목표 단어와 달라 발음 점수를 신뢰하기 어렵습니다. 목표 단어를 다시 녹음해주세요."
@@ -732,6 +737,30 @@ def _compute_l_acoustic_borderline_penalty(
     return 0.0, "none"
 
 
+def _compute_vowel_i_zcr_duration_penalty(
+    phoneme: str,
+    korean_pattern_status: str,
+    duration_ms: float,
+    zcr_mean: float,
+) -> tuple[float, str]:
+    """/i/ 불파음화·이중모음 전이 지연 복합 3중 AND 핀셋 패널티.
+
+    Duration ≥ 345ms (한국어식 받침 잔여 에너지 / 이중모음 조음 지연) AND
+    ZCR ≥ 0.24 (마찰 성분 잔류) 가 동시 발생할 때만 발동한다.
+    good/ship은 ZCR이 0.24 미만으로 유지되어 그물망을 완벽하게 Bypass한다.
+    /i/ 이외 음소에는 즉시 0.0 반환으로 인접 모음 채점선 오염을 방지한다.
+    """
+    if phoneme != "i":
+        return 0.0, "none"
+    if korean_pattern_status != "borderline_korean_like":
+        return 0.0, "none"
+    if duration_ms < _VOWEL_I_DURATION_THRESHOLD:
+        return 0.0, "none"
+    if zcr_mean < _VOWEL_I_ZCR_THRESHOLD:
+        return 0.0, "none"
+    return 3.0, "applied"
+
+
 def score_pronunciation(
     user_features: AudioFeatures,
     reference: ReferenceVector,
@@ -794,6 +823,12 @@ def score_pronunciation(
     r_micro_penalty, r_micro_status = _compute_r_micro_penalty(phoneme, liquid_alt_status, user_features)
     l_micro_penalty, l_micro_status = _compute_l_micro_penalty(phoneme, liquid_alt_status)
     l_borderline_penalty, l_borderline_status = _compute_l_acoustic_borderline_penalty(phoneme, liquid_acoustic_status)
+    vowel_i_zcr_duration_penalty, vowel_i_zcr_duration_status = _compute_vowel_i_zcr_duration_penalty(
+        phoneme,
+        korean_pattern_status,
+        duration_ms,
+        zcr_mean,
+    )
     liquid_alt_penalty = float(liquid_alt_metrics.get("liquid_alt_penalty") or 0.0)
     liquid_onset_penalty = float(liquid_alt_metrics.get("liquid_onset_penalty") or 0.0)
     liquid_acoustic_penalty = float(liquid_acoustic_metrics.get("liquid_acoustic_penalty") or 0.0)
@@ -804,6 +839,7 @@ def score_pronunciation(
     total_penalty = (
         pronunciation_penalty
         + korean_like_penalty
+        + vowel_i_zcr_duration_penalty
         + f_onset_penalty
         + f_onset_crest_penalty
         + f_onset_mfcc_penalty
@@ -842,6 +878,10 @@ def score_pronunciation(
         "l_micro_status": l_micro_status,
         "l_borderline_penalty": l_borderline_penalty,
         "l_borderline_status": l_borderline_status,
+        "vowel_i_zcr_duration_penalty": vowel_i_zcr_duration_penalty,
+        "vowel_i_zcr_duration_status": vowel_i_zcr_duration_status,
+        "vowel_i_duration_ms": round(duration_ms, 2) if phoneme == "i" else None,
+        "vowel_i_zcr_mean": round(zcr_mean, 6) if phoneme == "i" else None,
         "schwa_overstress_penalty": round(schwa_overstress_penalty, 1),
         "f_onset_penalty": f_onset_penalty,
         "f_onset_zcr_ratio": round(f_onset_zcr_ratio, 4),
