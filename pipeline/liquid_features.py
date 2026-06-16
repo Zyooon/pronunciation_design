@@ -21,13 +21,19 @@ MID_BAND_HZ = (1000.0, 2000.0)
 F3_BAND_HZ = (2000.0, 3000.0)
 HIGH_BAND_HZ = (3000.0, 5000.0)
 
-R_MEL_F3_TO_LOW_STRONG_THRESHOLD = 0.0005
-R_MEL_F3_TO_LOW_WEAK_THRESHOLD = 0.0010
-L_TRANSITION_DISTANCE_STRONG_THRESHOLD = 330.0
-L_TRANSITION_DISTANCE_WEAK_THRESHOLD = 340.0
-L_TRANSITION_C0_DELTA_THRESHOLD = 330.0
-LIQUID_ACOUSTIC_STRONG_PENALTY = 9.5
-LIQUID_ACOUSTIC_WEAK_PENALTY = 4.0
+# /r/ 감지 임계값: F3 Drop 누락 판별
+R_LOW_STRONG_THRESHOLD = 0.002    # Strong AND 조건 — f3_to_low
+R_MID_STRONG_THRESHOLD = 0.11     # Strong AND 조건 — f3_to_mid
+R_LOW_WEAK_THRESHOLD = 0.0010     # Weak 단일 지표 — f3_to_low
+
+# /l/ 감지 임계값: MFCC 전이 부재 판별
+L_STRONG_THRESHOLD = 320.0        # Strong AND 조건 — transition_distance
+L_C0_STRONG_THRESHOLD = 300.0     # Strong AND 조건 — c0_delta
+L_WEAK_THRESHOLD = 340.0          # Weak OR 조건 — transition_distance
+L_C0_WEAK_THRESHOLD = 330.0       # Weak OR 조건 — c0_delta
+
+LIQUID_ACOUSTIC_STRONG_PENALTY = 7.0
+LIQUID_ACOUSTIC_WEAK_PENALTY = 5.0
 LIQUID_ACOUSTIC_MAX_PENALTY = 9.5
 
 LiquidFeatureValue = float | None
@@ -216,7 +222,49 @@ def extract_liquid_acoustic_features(
     return features
 
 
+def _compute_r_penalty(features: dict[str, Any]) -> tuple[str, float]:
+    """F3 Drop 누락 여부를 두 지표의 AND/단일 조건으로 판별한다."""
+    f3_to_low = features.get("liquid_mel_f3_to_low_ratio")
+    if f3_to_low is None:
+        return "missing_mel_f3_to_low_ratio", 0.0
+
+    f3_to_low = float(f3_to_low)
+    f3_to_mid_raw = features.get("liquid_mel_f3_to_mid_ratio")
+    f3_to_mid = float(f3_to_mid_raw) if f3_to_mid_raw is not None else None
+
+    if f3_to_low < R_LOW_STRONG_THRESHOLD and f3_to_mid is not None and f3_to_mid < R_MID_STRONG_THRESHOLD:
+        return "korean_like", LIQUID_ACOUSTIC_STRONG_PENALTY
+
+    if f3_to_low < R_LOW_WEAK_THRESHOLD:
+        return "borderline_korean_like", LIQUID_ACOUSTIC_WEAK_PENALTY
+
+    return "ok", 0.0
+
+
+def _compute_l_penalty(features: dict[str, Any]) -> tuple[str, float]:
+    """MFCC 전이 부재 여부를 AND(강한) / OR(약한) 조건으로 판별한다."""
+    distance_raw = features.get("liquid_transition_mfcc_distance")
+    c0_raw = features.get("liquid_transition_mfcc_c0_delta")
+
+    if distance_raw is None and c0_raw is None:
+        return "missing_transition_features", 0.0
+
+    distance = float(distance_raw) if distance_raw is not None else None
+    c0_delta = float(c0_raw) if c0_raw is not None else None
+
+    if distance is not None and distance < L_STRONG_THRESHOLD and c0_delta is not None and c0_delta < L_C0_STRONG_THRESHOLD:
+        return "korean_like", LIQUID_ACOUSTIC_STRONG_PENALTY
+
+    weak_distance = distance is not None and distance < L_WEAK_THRESHOLD
+    weak_c0 = c0_delta is not None and c0_delta < L_C0_WEAK_THRESHOLD
+    if weak_distance or weak_c0:
+        return "borderline_korean_like", LIQUID_ACOUSTIC_WEAK_PENALTY
+
+    return "ok", 0.0
+
+
 def compute_liquid_acoustic_penalty(features: dict[str, Any], phoneme: str) -> dict[str, float | str | bool | None]:
+    """유음 음소의 한국어식 오독 패널티를 계산한다."""
     if phoneme not in LIQUID_PHONEMES:
         return {
             "liquid_acoustic_status": "not_applicable",
@@ -225,66 +273,13 @@ def compute_liquid_acoustic_penalty(features: dict[str, Any], phoneme: str) -> d
         }
 
     if phoneme == "r":
-        ratio = features.get("liquid_mel_f3_to_low_ratio")
-        if ratio is None:
-            return {
-                "liquid_acoustic_status": "missing_mel_f3_to_low_ratio",
-                "liquid_acoustic_penalty": 0.0,
-                "liquid_acoustic_penalty_applied": False,
-            }
-        ratio = float(ratio)
-        if ratio < R_MEL_F3_TO_LOW_STRONG_THRESHOLD:
-            penalty = LIQUID_ACOUSTIC_STRONG_PENALTY
-            status = "korean_like"
-        elif ratio < R_MEL_F3_TO_LOW_WEAK_THRESHOLD:
-            penalty = LIQUID_ACOUSTIC_WEAK_PENALTY
-            status = "borderline_korean_like"
-        else:
-            penalty = 0.0
-            status = "ok"
-        return {
-            "liquid_acoustic_status": status,
-            "liquid_acoustic_penalty": round(float(min(penalty, LIQUID_ACOUSTIC_MAX_PENALTY)), 1),
-            "liquid_acoustic_penalty_applied": penalty > 0.0,
-        }
+        status, penalty = _compute_r_penalty(features)
+    else:
+        status, penalty = _compute_l_penalty(features)
 
-    penalties: list[float] = []
-    statuses: list[str] = []
-
-    c0_delta = features.get("liquid_transition_mfcc_c0_delta")
-    if c0_delta is not None and float(c0_delta) < L_TRANSITION_C0_DELTA_THRESHOLD:
-        penalties.append(LIQUID_ACOUSTIC_STRONG_PENALTY)
-        statuses.append("c0_delta_korean_like")
-
-    distance = features.get("liquid_transition_mfcc_distance")
-    if distance is not None:
-        distance = float(distance)
-        if distance < L_TRANSITION_DISTANCE_STRONG_THRESHOLD:
-            penalties.append(LIQUID_ACOUSTIC_STRONG_PENALTY)
-            statuses.append("transition_distance_korean_like")
-        elif distance < L_TRANSITION_DISTANCE_WEAK_THRESHOLD:
-            penalties.append(LIQUID_ACOUSTIC_WEAK_PENALTY)
-            statuses.append("transition_distance_borderline")
-
-    if not penalties:
-        missing_c0 = c0_delta is None
-        missing_distance = features.get("liquid_transition_mfcc_distance") is None
-        if missing_c0 and missing_distance:
-            status = "missing_transition_features"
-        else:
-            status = "ok"
-        return {
-            "liquid_acoustic_status": status,
-            "liquid_acoustic_penalty": 0.0,
-            "liquid_acoustic_penalty_applied": False,
-        }
-
-    penalty = max(penalties)
-    status = "korean_like" if LIQUID_ACOUSTIC_STRONG_PENALTY in penalties else "borderline_korean_like"
-    if statuses:
-        status = f"{status}:{'+'.join(statuses)}"
+    capped_penalty = round(float(min(penalty, LIQUID_ACOUSTIC_MAX_PENALTY)), 1)
     return {
         "liquid_acoustic_status": status,
-        "liquid_acoustic_penalty": round(float(min(penalty, LIQUID_ACOUSTIC_MAX_PENALTY)), 1),
+        "liquid_acoustic_penalty": capped_penalty,
         "liquid_acoustic_penalty_applied": penalty > 0.0,
     }
