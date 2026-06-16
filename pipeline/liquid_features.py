@@ -25,7 +25,9 @@ R_MEL_F3_TO_LOW_STRONG_THRESHOLD = 0.0005
 R_MEL_F3_TO_LOW_WEAK_THRESHOLD = 0.0010
 L_TRANSITION_DISTANCE_STRONG_THRESHOLD = 330.0
 L_TRANSITION_DISTANCE_WEAK_THRESHOLD = 340.0
-LIQUID_ACOUSTIC_MAX_PENALTY = 5.0
+LIQUID_ACOUSTIC_STRONG_PENALTY = 7.0
+LIQUID_ACOUSTIC_WEAK_PENALTY = 4.0
+LIQUID_ACOUSTIC_MAX_PENALTY = 7.0
 
 LiquidFeatureValue = float | None
 LiquidFeatureDict = dict[str, LiquidFeatureValue]
@@ -231,10 +233,10 @@ def compute_liquid_acoustic_penalty(features: dict[str, Any], phoneme: str) -> d
             }
         ratio = float(ratio)
         if ratio < R_MEL_F3_TO_LOW_STRONG_THRESHOLD:
-            penalty = 5.0
+            penalty = LIQUID_ACOUSTIC_STRONG_PENALTY
             status = "korean_like"
         elif ratio < R_MEL_F3_TO_LOW_WEAK_THRESHOLD:
-            penalty = 3.0
+            penalty = LIQUID_ACOUSTIC_WEAK_PENALTY
             status = "borderline_korean_like"
         else:
             penalty = 0.0
@@ -254,10 +256,10 @@ def compute_liquid_acoustic_penalty(features: dict[str, Any], phoneme: str) -> d
         }
     distance = float(distance)
     if distance < L_TRANSITION_DISTANCE_STRONG_THRESHOLD:
-        penalty = 5.0
+        penalty = LIQUID_ACOUSTIC_STRONG_PENALTY
         status = "korean_like"
     elif distance < L_TRANSITION_DISTANCE_WEAK_THRESHOLD:
-        penalty = 3.0
+        penalty = LIQUID_ACOUSTIC_WEAK_PENALTY
         status = "borderline_korean_like"
     else:
         penalty = 0.0
