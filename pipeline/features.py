@@ -9,6 +9,10 @@ ONSET_RMS_NOISE_THRESHOLD = 0.005
 ONSET_RMS_WINDOW_MS = 150.0
 _ONSET_HOP_LENGTH = 512
 
+VOWEL_CORE_HALF_WINDOW_MS = 50.0
+VOWEL_CORE_PHONEMES: frozenset[str] = frozenset({"i", "iː", "æ", "ə", "oʊ"})
+_VOWEL_CORE_HOP_LENGTH = 256
+
 FeatureValue = float | list[float]
 
 
@@ -149,17 +153,88 @@ def extract_onset_window_features(
     }
 
 
+def _empty_vowel_core_features() -> dict[str, FeatureValue]:
+    return {
+        "vowel_core_peak_width_ms": None,
+        "vowel_core_mfcc_delta_mean": None,
+        "vowel_core_mfcc_std_mean": None,
+        "vowel_core_mfcc_mean": None,
+    }
+
+
+def extract_vowel_core_features(
+    waveform: np.ndarray,
+    sr: int,
+    n_mfcc: int = N_MFCC,
+    *,
+    half_window_ms: float = VOWEL_CORE_HALF_WINDOW_MS,
+) -> dict[str, FeatureValue]:
+    """에너지 정점(Peak) 기준 ±half_window_ms 구간의 순수 모음 핵(Vowel Core) 특징을 추출합니다."""
+    if len(waveform) == 0:
+        return _empty_vowel_core_features()
+
+    rms_frames = librosa.feature.rms(y=waveform, hop_length=_VOWEL_CORE_HOP_LENGTH)[0]
+    if len(rms_frames) == 0:
+        return _empty_vowel_core_features()
+
+    peak_frame = int(np.argmax(rms_frames))
+    peak_sample = peak_frame * _VOWEL_CORE_HOP_LENGTH
+    threshold = float(rms_frames[peak_frame]) * 0.7
+
+    left_frame = 0
+    for idx in range(peak_frame - 1, -1, -1):
+        if float(rms_frames[idx]) < threshold:
+            left_frame = idx + 1
+            break
+
+    right_frame = len(rms_frames) - 1
+    for idx in range(peak_frame + 1, len(rms_frames)):
+        if float(rms_frames[idx]) < threshold:
+            right_frame = idx - 1
+            break
+
+    peak_width_ms = (right_frame - left_frame + 1) * _VOWEL_CORE_HOP_LENGTH / sr * 1000.0
+
+    half_samples = max(1, int(sr * half_window_ms / 1000.0))
+    start_sample = max(0, peak_sample - half_samples)
+    end_sample = min(len(waveform), peak_sample + half_samples)
+    core_waveform = waveform[start_sample:end_sample]
+
+    if len(core_waveform) == 0:
+        return {**_empty_vowel_core_features(), "vowel_core_peak_width_ms": round(peak_width_ms, 3)}
+
+    try:
+        mfcc_frames = _extract_mfcc_frames(core_waveform, sr, n_mfcc)
+    except ValueError:
+        return {**_empty_vowel_core_features(), "vowel_core_peak_width_ms": round(peak_width_ms, 3)}
+
+    mfcc_mean = np.mean(mfcc_frames, axis=1)
+    mfcc_std_mean = float(np.mean(np.std(mfcc_frames, axis=1)))
+    mfcc_delta_mean = (
+        float(np.mean(np.abs(np.diff(mfcc_frames, axis=1)))) if mfcc_frames.shape[1] > 1 else 0.0
+    )
+
+    return {
+        "vowel_core_peak_width_ms": round(peak_width_ms, 3),
+        "vowel_core_mfcc_delta_mean": round(mfcc_delta_mean, 6),
+        "vowel_core_mfcc_std_mean": round(mfcc_std_mean, 6),
+        "vowel_core_mfcc_mean": _to_float_list(mfcc_mean),
+    }
+
+
 def extract_features(
     waveform: np.ndarray,
     sr: int,
     *,
     include_onset: bool = False,
+    include_vowel_core: bool = False,
     onset_window_ms: float = DEFAULT_ONSET_WINDOW_MS,
 ) -> dict[str, FeatureValue]:
     """채점과 reference vector 생성에 사용할 특징 dict를 반환합니다.
 
     include_onset=False를 기본값으로 둬 기존 reference vector 생성 기준선을 유지합니다.
     onset feature는 재채점/분석 루프에서 onset target 단어에만 명시적으로 켭니다.
+    include_vowel_core=True일 때 에너지 정점 기준 100ms 구간의 모음 핵 특징을 추가합니다.
     """
     features: dict[str, FeatureValue] = {
         **extract_mfcc_time_features(waveform, sr),
@@ -170,4 +245,6 @@ def extract_features(
     }
     if include_onset:
         features.update(extract_onset_window_features(waveform, sr, window_ms=onset_window_ms))
+    if include_vowel_core:
+        features.update(extract_vowel_core_features(waveform, sr))
     return features

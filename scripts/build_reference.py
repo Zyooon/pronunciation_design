@@ -11,7 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from pipeline.audio import load_trimmed_audio
-from pipeline.features import extract_features
+from pipeline.features import VOWEL_CORE_PHONEMES, extract_features
 from pipeline.word_targets import WordTarget, load_word_targets, should_extract_onset
 
 
@@ -37,6 +37,14 @@ ONSET_SCALAR_FEATURE_KEYS = (
 )
 ONSET_SEQUENCE_FEATURE_KEYS = (
     "onset_mfcc_mean",
+)
+VOWEL_CORE_SEQUENCE_FEATURE_KEYS = (
+    "vowel_core_mfcc_mean",
+)
+VOWEL_CORE_SCALAR_FEATURE_KEYS = (
+    "vowel_core_peak_width_ms",
+    "vowel_core_mfcc_delta_mean",
+    "vowel_core_mfcc_std_mean",
 )
 
 
@@ -80,7 +88,7 @@ def find_audio_files(reference_audio_dir: Path, word: str) -> list[Path]:
 
 
 def _aggregate_feature(samples: list[dict], key: str) -> tuple[list[float], list[float]] | None:
-    values = [sample[key] for sample in samples if key in sample]
+    values = [sample[key] for sample in samples if key in sample and sample[key] is not None]
     if not values:
         return None
     arr = np.array(values, dtype=float)
@@ -88,7 +96,7 @@ def _aggregate_feature(samples: list[dict], key: str) -> tuple[list[float], list
 
 
 def _aggregate_scalar_feature(samples: list[dict], key: str) -> tuple[float, float] | None:
-    values = [float(sample[key]) for sample in samples if key in sample]
+    values = [float(sample[key]) for sample in samples if key in sample and sample[key] is not None]
     if not values:
         return None
     arr = np.array(values, dtype=float)
@@ -124,7 +132,7 @@ def aggregate_reference_vectors(samples: list[dict]) -> dict:
         "sample_count": len(samples),
     }
 
-    for key in SEQUENCE_FEATURE_KEYS + ONSET_SEQUENCE_FEATURE_KEYS:
+    for key in SEQUENCE_FEATURE_KEYS + ONSET_SEQUENCE_FEATURE_KEYS + VOWEL_CORE_SEQUENCE_FEATURE_KEYS:
         aggregated = _aggregate_feature(samples, key)
         if aggregated is None:
             continue
@@ -132,7 +140,7 @@ def aggregate_reference_vectors(samples: list[dict]) -> dict:
         vector[key] = mean_values
         vector[f"{key}_std"] = std_values
 
-    for key in ONSET_SCALAR_FEATURE_KEYS:
+    for key in ONSET_SCALAR_FEATURE_KEYS + VOWEL_CORE_SCALAR_FEATURE_KEYS:
         aggregated = _aggregate_scalar_feature(samples, key)
         if aggregated is None:
             continue
@@ -170,16 +178,18 @@ def build_reference_vectors(words_path: Path, reference_audio_dir: Path, output_
         korean_by_word[word] = korean_pronunciation
 
         include_onset = should_extract_onset(word, phoneme, word_targets)
+        include_vowel_core = phoneme in VOWEL_CORE_PHONEMES
         for audio_path in audio_files:
             try:
                 y, sr = load_trimmed_audio(audio_path)
-                features = extract_features(y, sr, include_onset=include_onset)
+                features = extract_features(y, sr, include_onset=include_onset, include_vowel_core=include_vowel_core)
                 features["word"] = word
                 features["source_file"] = str(audio_path.resolve().relative_to(PROJECT_ROOT.resolve()))
                 grouped_samples[phoneme].append(features)
                 test_words_by_phoneme[phoneme].add(word)
                 onset_note = " + onset" if include_onset else ""
-                print(f"[OK] {word} ({phoneme}){onset_note} <- {audio_path}")
+                vowel_core_note = " + vowel_core" if include_vowel_core else ""
+                print(f"[OK] {word} ({phoneme}){onset_note}{vowel_core_note} <- {audio_path}")
             except Exception as exc:
                 print(f"[SKIP] Failed to process {audio_path}: {exc}")
 

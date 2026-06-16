@@ -743,22 +743,13 @@ def _compute_vowel_i_zcr_duration_penalty(
     duration_ms: float,
     zcr_mean: float,
 ) -> tuple[float, str]:
-    """/i/ 불파음화·이중모음 전이 지연 복합 3중 AND 핀셋 패널티.
+    """/i/ Duration+ZCR 복합 패널티 — 현재 비활성(good/korean_like 수치 공간 중첩으로 오탐 확인).
 
-    Duration ≥ 345ms (한국어식 받침 잔여 에너지 / 이중모음 조음 지연) AND
-    ZCR ≥ 0.24 (마찰 성분 잔류) 가 동시 발생할 때만 발동한다.
-    good/ship은 ZCR이 0.24 미만으로 유지되어 그물망을 완벽하게 Bypass한다.
-    /i/ 이외 음소에는 즉시 0.0 반환으로 인접 모음 채점선 오염을 방지한다.
+    임계값 상수(_VOWEL_I_DURATION_THRESHOLD, _VOWEL_I_ZCR_THRESHOLD)와
+    details 로깅 키는 데이터 수집 인프라로 유지하되, 패널티는 0.0으로 고정한다.
+    재활성화 시 마지막 return 문을 `return 3.0, "applied"` 로 복원한다.
     """
-    if phoneme != "i":
-        return 0.0, "none"
-    if korean_pattern_status != "borderline_korean_like":
-        return 0.0, "none"
-    if duration_ms < _VOWEL_I_DURATION_THRESHOLD:
-        return 0.0, "none"
-    if zcr_mean < _VOWEL_I_ZCR_THRESHOLD:
-        return 0.0, "none"
-    return 3.0, "applied"
+    return 0.0, "disabled"
 
 
 def score_pronunciation(
@@ -833,6 +824,7 @@ def score_pronunciation(
     liquid_onset_penalty = float(liquid_alt_metrics.get("liquid_onset_penalty") or 0.0)
     liquid_acoustic_penalty = float(liquid_acoustic_metrics.get("liquid_acoustic_penalty") or 0.0)
     schwa_overstress_penalty = float(schwa_metrics.get("schwa_overstress_penalty") or 0.0)
+    vowel_core_mfcc_distance = _vector_distance(user_features, reference, "vowel_core_mfcc_mean")
 
     active_liquid_alt_penalty = 0.0
     active_liquid_onset_penalty = 0.0
@@ -895,6 +887,10 @@ def score_pronunciation(
         "f_onset_mfcc_penalty": f_onset_mfcc_penalty,
         "f_onset_mfcc_status": f_onset_mfcc_status,
         "f_onset_centroid_ratio": round(f_onset_centroid_ratio, 4),
+        "vowel_core_peak_width_ms": user_features.get("vowel_core_peak_width_ms"),
+        "vowel_core_mfcc_delta_mean": user_features.get("vowel_core_mfcc_delta_mean"),
+        "vowel_core_mfcc_std_mean": user_features.get("vowel_core_mfcc_std_mean"),
+        "vowel_core_mfcc_distance": round(vowel_core_mfcc_distance, 4) if vowel_core_mfcc_distance is not None else None,
         "mismatch_penalty": 0.0,
         "total_penalty": round(total_penalty, 1),
         "final_score": round(final_score, 1),

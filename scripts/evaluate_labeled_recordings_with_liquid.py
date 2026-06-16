@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.audio import load_trimmed_audio
-from pipeline.features import extract_features
+from pipeline.features import VOWEL_CORE_PHONEMES, extract_features
 from pipeline.liquid_features import extract_liquid_acoustic_features
 from pipeline.quality import evaluate_recording_quality
 from pipeline.reference import TargetWord
@@ -40,6 +40,13 @@ DETAIL_FIELDS = tuple(
             "f_onset_mfcc_score",
             "f_onset_mfcc_penalty",
             "f_onset_centroid_ratio",
+            "vowel_i_zcr_duration_penalty",
+            "vowel_i_duration_ms",
+            "vowel_i_zcr_mean",
+            "vowel_core_peak_width_ms",
+            "vowel_core_mfcc_delta_mean",
+            "vowel_core_mfcc_std_mean",
+            "vowel_core_mfcc_distance",
         )
     )
 )
@@ -64,7 +71,8 @@ def score_audio_file(
 
     waveform, sample_rate = load_trimmed_audio(audio_path)
     include_onset = should_extract_onset(target.word, target.phoneme, word_targets)
-    features = extract_features(waveform, sample_rate, include_onset=include_onset)
+    include_vowel_core = target.phoneme in VOWEL_CORE_PHONEMES
+    features = extract_features(waveform, sample_rate, include_onset=include_onset, include_vowel_core=include_vowel_core)
     if target.phoneme in base_eval.LIQUID_REFERENCE_PHONEMES:
         features.update(extract_liquid_acoustic_features(waveform, sample_rate))
     attach_word_target_features(features, target.word, target.phoneme, word_targets)
@@ -117,6 +125,7 @@ def score_audio_file(
         "f_onset_penalty_status": details.get("f_onset_penalty_status"),
         "f_onset_rms_crest_status": details.get("f_onset_rms_crest_status"),
         "f_onset_mfcc_status": details.get("f_onset_mfcc_status"),
+        "vowel_i_zcr_duration_status": details.get("vowel_i_zcr_duration_status"),
     }
     for key in LIQUID_FEATURE_FIELDS:
         row[key] = base_eval.safe_float(features.get(key))
