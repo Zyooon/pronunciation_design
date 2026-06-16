@@ -29,7 +29,18 @@ LIQUID_FEATURE_FIELDS = (
 
 DETAIL_FIELDS = tuple(
     dict.fromkeys(
-        (*base_eval.DETAIL_FIELDS, "liquid_acoustic_penalty")
+        (
+            *base_eval.DETAIL_FIELDS,
+            "liquid_acoustic_penalty",
+            "f_onset_penalty",
+            "f_onset_zcr_ratio",
+            "f_onset_crest_penalty",
+            "f_onset_rms_crest_factor",
+            "f_onset_mfcc_distance",
+            "f_onset_mfcc_score",
+            "f_onset_mfcc_penalty",
+            "f_onset_centroid_ratio",
+        )
     )
 )
 
@@ -92,8 +103,10 @@ def score_audio_file(
         "zcr_mean": base_eval.safe_float(features.get("zcr_mean")),
         "spectral_centroid_mean": base_eval.safe_float(features.get("spectral_centroid_mean")),
         "onset_rms_mean": base_eval.safe_float(features.get("onset_rms_mean")),
+        "onset_rms_max": base_eval.safe_float(features.get("onset_rms_max")),
         "onset_window_ms": base_eval.safe_float(features.get("onset_window_ms")),
         "onset_spectral_centroid_mean": base_eval.safe_float(features.get("onset_spectral_centroid_mean")),
+        "onset_zcr_mean": base_eval.safe_float(features.get("onset_zcr_mean")),
         "korean_pattern_status": details.get("korean_pattern_status"),
         "korean_pattern_penalty_policy": details.get("korean_pattern_penalty_policy"),
         "liquid_alt_status": details.get("liquid_alt_status"),
@@ -101,6 +114,9 @@ def score_audio_file(
         "liquid_acoustic_status": details.get("liquid_acoustic_status"),
         "liquid_acoustic_penalty_applied": details.get("liquid_acoustic_penalty_applied"),
         "schwa_overstress_status": details.get("schwa_overstress_status"),
+        "f_onset_penalty_status": details.get("f_onset_penalty_status"),
+        "f_onset_rms_crest_status": details.get("f_onset_rms_crest_status"),
+        "f_onset_mfcc_status": details.get("f_onset_mfcc_status"),
     }
     for key in LIQUID_FEATURE_FIELDS:
         row[key] = base_eval.safe_float(features.get(key))

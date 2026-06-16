@@ -10,6 +10,7 @@ from pipeline.features import extract_features
 from pipeline.liquid_features import LIQUID_PHONEMES, extract_liquid_acoustic_features
 from pipeline.reference import load_reference_vectors
 from pipeline.scorer import score_pronunciation
+from pipeline.word_targets import load_word_targets, should_extract_onset
 from webapp.schemas.pronunciation import AnalysisResultDto, WordDto
 
 log = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ KO_REFERENCE_PATH = PROJECT_ROOT / "data" / "ko_reference_vectors.json"
 # reference_vectors.json은 크기가 크므로 프로세스 당 한 번만 로드한다.
 _reference_cache: dict | None = None
 _ko_reference_cache: dict | None = None
+_word_targets_cache: dict | None = None
 
 
 def load_word_list() -> list[WordDto]:
@@ -105,8 +107,10 @@ def analyze_audio_with_features(
     elif phoneme == "l":
         liquid_alt_reference = reference_vectors.get("r")
     ko_reference = ko_reference_vectors.get(phoneme)
+    word_targets = _get_word_targets()
     waveform, sr = load_trimmed_audio(audio_path)
-    features = extract_features(waveform, sr)
+    include_onset = should_extract_onset(word, phoneme, word_targets)
+    features = extract_features(waveform, sr, include_onset=include_onset)
     if phoneme in LIQUID_PHONEMES:
         features.update(extract_liquid_acoustic_features(waveform, sr))
     score_result = score_pronunciation(
@@ -166,3 +170,11 @@ def _get_ko_reference_vectors() -> dict:
             with KO_REFERENCE_PATH.open("r", encoding="utf-8") as f:
                 _ko_reference_cache = json.load(f)
     return _ko_reference_cache
+
+
+def _get_word_targets() -> dict:
+    """word_targets.json을 캐시해서 반환한다."""
+    global _word_targets_cache
+    if _word_targets_cache is None:
+        _word_targets_cache = load_word_targets()
+    return _word_targets_cache

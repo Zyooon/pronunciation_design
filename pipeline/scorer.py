@@ -55,6 +55,9 @@ _LIQUID_ONSET_SCORE_STRONG = 48.0
 _LIQUID_ONSET_PENALTY_MULTIPLIER = 0.5
 _LIQUID_ONSET_PENALTY_MAX = 8.0
 
+# 데이터 수집 단계의 보수적 가설치 — 충분한 샘플 확보 후 재조정 필요
+_F_ONSET_MFCC_DISTANCE_THRESHOLD = 20.0
+
 _QUALITY_GATE_FEEDBACK = "녹음 품질이 낮아 발음 점수를 신뢰하기 어렵습니다. 다시 녹음해주세요."
 _WORD_MISMATCH_FEEDBACK = "녹음된 단어가 목표 단어와 달라 발음 점수를 신뢰하기 어렵습니다. 목표 단어를 다시 녹음해주세요."
 
@@ -583,6 +586,91 @@ def _apply_f_korean_like_penalty_adjustment(
     return base_penalty
 
 
+def _compute_f_onset_zcr_penalty(
+    phoneme: str,
+    korean_pattern_status: str,
+    user_onset_zcr_mean: float | None,
+    ref_onset_zcr_mean: float | None,
+) -> tuple[float, float, str]:
+    """유저 Onset ZCR / 원어민 Ref Onset ZCR 비율로 /f/ 마찰음 실종 오독을 탐지한다.
+
+    단어 전체 평균 대신 초반 onset 구간만 비교하므로 fix의 /ks/ 오염에 무관하다.
+    """
+    if phoneme != "f":
+        return 0.0, 1.0, "none"
+    if not user_onset_zcr_mean or not ref_onset_zcr_mean or ref_onset_zcr_mean <= 0.0:
+        return 0.0, 1.0, "missing_onset_zcr"
+
+    ratio = float(user_onset_zcr_mean) / (float(ref_onset_zcr_mean) + EPSILON)
+    if korean_pattern_status in ("borderline_korean_like", "ko_error") and ratio < 0.65:
+        return 2.0, ratio, "applied"
+    return 0.0, ratio, "none"
+
+
+def _compute_f_onset_mfcc_metrics(
+    phoneme: str,
+    korean_pattern_status: str,
+    user_onset_mfcc: list[float] | None,
+    ref_onset_mfcc: list[float] | None,
+    user_onset_centroid: float | None,
+    ref_onset_centroid: float | None,
+) -> tuple[float, float, float, str, float]:
+    """Onset 구간 13차원 MFCC 유클리드 거리로 /f/ 순수 음색 오독을 탐지한다.
+
+    후속 복합 자음(/ks/ 등)의 오염을 원천 차단하고, 초반 onset 음색 공간만 비교한다.
+    f_onset_centroid_ratio는 패널티 없이 진단 데이터로만 수집한다.
+
+    Returns:
+        (penalty, distance, score, status, centroid_ratio)
+    """
+    centroid_ratio = (
+        float(user_onset_centroid) / (float(ref_onset_centroid) + EPSILON)
+        if user_onset_centroid is not None and ref_onset_centroid is not None
+        else 0.0
+    )
+
+    if phoneme != "f":
+        return 0.0, 0.0, 100.0, "none", centroid_ratio
+    if not user_onset_mfcc or not ref_onset_mfcc:
+        return 0.0, 0.0, 100.0, "missing_onset_mfcc", centroid_ratio
+
+    try:
+        distance = float(
+            np.linalg.norm(np.array(user_onset_mfcc, dtype=float) - np.array(ref_onset_mfcc, dtype=float))
+        )
+    except Exception:
+        return 0.0, 0.0, 100.0, "compute_error", centroid_ratio
+
+    score = float(np.clip(100.0 - distance * 2.5, 0.0, 100.0))
+
+    if korean_pattern_status in ("borderline_korean_like", "ko_error") and distance > _F_ONSET_MFCC_DISTANCE_THRESHOLD:
+        return 2.0, distance, score, "applied", centroid_ratio
+    return 0.0, distance, score, "none", centroid_ratio
+
+
+def _compute_f_onset_crest_penalty(
+    phoneme: str,
+    korean_pattern_status: str,
+    onset_rms_max: float | None,
+    onset_rms_mean: float | None,
+) -> tuple[float, float, str]:
+    """/f/ Onset 구간의 RMS Crest Factor(파고율)로 파열음 오독을 탐지한다.
+
+    /f/ 마찰음은 에너지 엔벨로프가 평탄(낮은 파고율),
+    한국어 ㅍ 파열음은 첫 burst에 에너지가 집중(높은 파고율).
+    crest_factor >= 4.0은 보수적 임계값으로, good/fix 오탐 방지에 중점을 둔다.
+    """
+    if phoneme != "f":
+        return 0.0, 0.0, "none"
+    if onset_rms_max is None or onset_rms_mean is None:
+        return 0.0, 0.0, "missing_onset_rms"
+
+    crest_factor = float(onset_rms_max) / (float(onset_rms_mean) + EPSILON)
+    if korean_pattern_status in ("borderline_korean_like", "ko_error") and crest_factor >= 4.0:
+        return 2.0, crest_factor, "applied"
+    return 0.0, crest_factor, "none"
+
+
 def score_pronunciation(
     user_features: AudioFeatures,
     reference: ReferenceVector,
@@ -618,6 +706,28 @@ def score_pronunciation(
     korean_like_penalty = _apply_f_korean_like_penalty_adjustment(
         phoneme, korean_pattern_status, centroid_is_low, zcr_is_low, korean_like_penalty
     )
+    f_onset_penalty, f_onset_zcr_ratio, f_onset_penalty_status = _compute_f_onset_zcr_penalty(
+        phoneme,
+        korean_pattern_status,
+        user_features.get("onset_zcr_mean"),
+        reference.get("onset_zcr_mean"),
+    )
+    f_onset_crest_penalty, f_onset_rms_crest_factor, f_onset_rms_crest_status = _compute_f_onset_crest_penalty(
+        phoneme,
+        korean_pattern_status,
+        user_features.get("onset_rms_max"),
+        user_features.get("onset_rms_mean"),
+    )
+    f_onset_mfcc_penalty, f_onset_mfcc_distance, f_onset_mfcc_score, f_onset_mfcc_status, f_onset_centroid_ratio = (
+        _compute_f_onset_mfcc_metrics(
+            phoneme,
+            korean_pattern_status,
+            user_features.get("onset_mfcc_mean"),
+            reference.get("onset_mfcc_mean"),
+            user_features.get("onset_spectral_centroid_mean"),
+            reference.get("onset_spectral_centroid_mean"),
+        )
+    )
     liquid_alt_penalty = float(liquid_alt_metrics.get("liquid_alt_penalty") or 0.0)
     liquid_onset_penalty = float(liquid_alt_metrics.get("liquid_onset_penalty") or 0.0)
     liquid_acoustic_penalty = float(liquid_acoustic_metrics.get("liquid_acoustic_penalty") or 0.0)
@@ -628,6 +738,9 @@ def score_pronunciation(
     total_penalty = (
         pronunciation_penalty
         + korean_like_penalty
+        + f_onset_penalty
+        + f_onset_crest_penalty
+        + f_onset_mfcc_penalty
         + active_liquid_alt_penalty
         + active_liquid_onset_penalty
         + liquid_acoustic_penalty
@@ -655,6 +768,18 @@ def score_pronunciation(
         "active_liquid_onset_penalty": round(active_liquid_onset_penalty, 1),
         "liquid_acoustic_penalty": round(liquid_acoustic_penalty, 1),
         "schwa_overstress_penalty": round(schwa_overstress_penalty, 1),
+        "f_onset_penalty": f_onset_penalty,
+        "f_onset_zcr_ratio": round(f_onset_zcr_ratio, 4),
+        "f_onset_penalty_status": f_onset_penalty_status,
+        "f_onset_crest_penalty": f_onset_crest_penalty,
+        "f_onset_rms_crest_factor": round(f_onset_rms_crest_factor, 4),
+        "f_onset_rms_crest_status": f_onset_rms_crest_status,
+        "onset_rms_max": round(float(user_features.get("onset_rms_max") or 0.0), 6),
+        "f_onset_mfcc_distance": round(f_onset_mfcc_distance, 4),
+        "f_onset_mfcc_score": round(f_onset_mfcc_score, 1),
+        "f_onset_mfcc_penalty": f_onset_mfcc_penalty,
+        "f_onset_mfcc_status": f_onset_mfcc_status,
+        "f_onset_centroid_ratio": round(f_onset_centroid_ratio, 4),
         "mismatch_penalty": 0.0,
         "total_penalty": round(total_penalty, 1),
         "final_score": round(final_score, 1),

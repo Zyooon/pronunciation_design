@@ -33,6 +33,7 @@ ONSET_SCALAR_FEATURE_KEYS = (
     "onset_rms_mean",
     "onset_window_ms",
     "onset_spectral_centroid_mean",
+    "onset_zcr_mean",
 )
 ONSET_SEQUENCE_FEATURE_KEYS = (
     "onset_mfcc_mean",

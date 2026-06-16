@@ -135,13 +135,16 @@ def extract_onset_window_features(
     rms_window = waveform[onset_sample : onset_sample + rms_window_samples]
     if len(rms_window) == 0:
         rms_window = onset_waveform
-    onset_rms_mean = extract_rms(rms_window)
+    onset_rms_frames = librosa.feature.rms(y=rms_window)[0]
+    onset_rms_mean = float(np.mean(onset_rms_frames)) if len(onset_rms_frames) > 0 else 0.0
+    onset_rms_max = float(np.max(onset_rms_frames)) if len(onset_rms_frames) > 0 else 0.0
 
     return {
         "onset_window_ms": actual_window_ms,
         "onset_mfcc_mean": _to_float_list(extract_mfcc(onset_waveform, sr)),
         "onset_zcr_mean": extract_zcr(onset_waveform),
         "onset_rms_mean": onset_rms_mean,
+        "onset_rms_max": onset_rms_max,
         "onset_spectral_centroid_mean": extract_spectral_centroid(onset_waveform, sr),
     }
 
