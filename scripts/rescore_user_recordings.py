@@ -1,3 +1,9 @@
+"""DB에 저장된 사용자 녹음을 현재 scorer로 재채점하는 스크립트.
+
+user_recordings 테이블의 라벨별 최신 row를 조회해 음성 feature를 재추출하고
+새 점수·피드백으로 덮어써 scorer 업데이트 후 일괄 재평가에 사용한다.
+"""
+
 import argparse
 import json
 import logging

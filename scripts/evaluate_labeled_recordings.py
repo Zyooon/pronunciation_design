@@ -1,3 +1,9 @@
+"""라벨링된 음성 파일을 현재 scorer로 평가하는 스크립트.
+
+good/korean_like 라벨 폴더의 음성을 채점하고 점수 분포, 실패 사례, 오류를
+JSON 요약과 CSV 리포트로 data/reports에 저장한다.
+"""
+
 from __future__ import annotations
 
 import argparse

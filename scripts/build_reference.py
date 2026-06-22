@@ -1,3 +1,9 @@
+"""reference_en 오디오에서 음소별 reference vector를 생성하는 스크립트.
+
+words.txt의 단어를 음소 기준으로 그룹화하고, 여러 화자 오디오의 feature를
+평균·표준편차로 집계해 data/reference_vectors.json에 저장한다.
+"""
+
 import argparse
 import json
 import sys

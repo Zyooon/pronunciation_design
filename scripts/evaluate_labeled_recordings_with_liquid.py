@@ -1,3 +1,9 @@
+"""liquid feature를 포함한 라벨링 음성 평가 스크립트.
+
+evaluate_labeled_recordings를 기반으로 r/l 음소에 대한 liquid acoustic feature를
+추가 추출하고 채점 결과를 확장된 CSV 리포트로 저장한다.
+"""
+
 from __future__ import annotations
 
 import json

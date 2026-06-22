@@ -1,3 +1,9 @@
+"""영어 발음과 한국어식 발음의 audio feature를 비교하는 스크립트.
+
+words.txt의 각 단어에 대해 gTTS 영어/한국어식 오디오를 로드하고
+MFCC, ZCR, RMS, spectral centroid 차이를 계산해 SQLite와 JSON에 저장한다.
+"""
+
 import argparse
 import json
 import sys

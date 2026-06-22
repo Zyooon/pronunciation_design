@@ -1,3 +1,9 @@
+"""gTTS를 사용해 영어 및 한국어식 발음 오디오를 생성하는 스크립트.
+
+words.txt에서 단어 목록을 읽어 영어(en-US)와 한국어(ko) gTTS 오디오 파일을 생성하고
+data/reference_en/gtts, data/reference_ko/gtts 디렉터리에 mp3로 저장한다.
+"""
+
 import time
 from pathlib import Path
 

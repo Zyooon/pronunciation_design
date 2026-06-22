@@ -1,9 +1,7 @@
-"""
-words.txt를 읽어 ElevenLabs 오디오 파일을 생성합니다.
-인터넷 연결 및 .env의 ELEVENLABS_API_KEY 필요.
+"""ElevenLabs API를 사용해 영어 reference 오디오를 생성하는 스크립트.
 
-폴더 구조:
-  data/reference_en/<Voice>/단어.mp3
+words.txt를 읽어 여러 화자(Bella, Sarah, George 등)의 음성을 생성하고
+data/reference_en/<Voice>/단어.mp3 경로로 저장한다. ELEVENLABS_API_KEY 필요.
 """
 
 import argparse
