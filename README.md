@@ -7,7 +7,10 @@
 
 ## 파이프라인
 
-![PronounceAI 발음 채점 파이프라인](pipeline.png)
+![PronounceAI 발음 채점 파이프라인]
+<p align="center">
+<img width="1672" height="941" alt="Image" src="https://github.com/user-attachments/assets/03113d51-af21-4064-9d4a-c7197154c8d2" />
+</p>
 
 | 단계 | 설명 |
 |------|------|
