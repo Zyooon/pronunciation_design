@@ -1,3 +1,9 @@
+"""영어 reference와 한국어식 reference의 feature 비교를 담당하는 모듈.
+
+동일한 단어의 원어민 reference 음성과 한국어식 reference 음성에서 추출한 feature를 비교한다.
+MFCC distance, duration, ZCR, RMS, spectral centroid 차이를 계산해 reference 품질 검증과 scorer 튜닝에 활용한다.
+"""
+
 import json
 import sqlite3
 from pathlib import Path

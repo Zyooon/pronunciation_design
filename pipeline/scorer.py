@@ -1,3 +1,9 @@
+"""발음 점수 계산과 피드백 생성을 담당하는 모듈.
+
+사용자 음성 feature와 reference vector를 비교해 pronunciation score를 계산한다.
+음소별 scoring rule, 한국어식 reference penalty, quality gate 결과를 반영해 최종 피드백과 세부 지표를 생성한다.
+"""
+
 from typing import Any, TypedDict
 
 import numpy as np

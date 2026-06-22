@@ -1,3 +1,9 @@
+"""발음 평가용 음향 feature 추출을 담당하는 모듈.
+
+전처리된 waveform에서 MFCC, ZCR, RMS, duration, spectral centroid를 계산한다.
+필요한 경우 onset 구간과 vowel core 구간의 세부 feature를 추가로 추출한다.
+"""
+
 import librosa
 import numpy as np
 

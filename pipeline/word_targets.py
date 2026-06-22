@@ -1,3 +1,9 @@
+"""단어별 target phoneme 위치 메타데이터를 관리하는 모듈.
+
+word_targets.json을 로드해 각 단어의 타겟 음소가 onset, nucleus, coda, full 중 어디에 해당하는지 조회한다.
+조회한 위치 정보는 onset feature 추출 여부와 분석용 metadata 연결에 사용된다.
+"""
+
 from __future__ import annotations
 
 import json

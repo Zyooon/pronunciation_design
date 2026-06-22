@@ -1,3 +1,9 @@
+"""발음 분석 결과와 reference 비교 결과 저장을 담당하는 모듈.
+
+SQLite 테이블을 초기화하고 사용자 녹음 결과, 세부 점수, 테스트 라벨을 저장한다.
+영어 reference와 한국어식 reference의 feature 비교 실험 결과도 함께 기록한다.
+"""
+
 import json
 import logging
 import sqlite3

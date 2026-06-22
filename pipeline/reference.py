@@ -1,3 +1,9 @@
+"""타겟 단어와 reference vector 로드를 담당하는 모듈.
+
+words.txt와 reference_vectors.json을 기반으로 연습 단어, 타겟 음소,
+target_id, 기준 feature 정보를 조회할 수 있는 구조를 제공한다.
+"""
+
 import json
 from dataclasses import dataclass
 from pathlib import Path

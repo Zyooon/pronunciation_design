@@ -1,3 +1,9 @@
+"""녹음 품질과 단어 일치 여부를 평가하는 모듈.
+
+duration, volume, noise issue를 확인해 입력 음성이 평가 가능한 상태인지 판단한다.
+audio_path와 target_word가 전달되면 faster-whisper 기반 target word validation도 함께 수행한다.
+"""
+
 from __future__ import annotations
 
 import logging

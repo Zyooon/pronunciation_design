@@ -1,3 +1,9 @@
+"""오디오 로드와 전처리를 담당하는 모듈.
+
+사용자 녹음 또는 reference 음성을 로드하고, sampling rate를 정규화한다.
+VAD 기반 앞뒤 묵음 제거를 수행해 feature 추출에 사용할 waveform을 만든다.
+"""
+
 from pathlib import Path
 
 import librosa

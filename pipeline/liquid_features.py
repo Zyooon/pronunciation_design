@@ -1,3 +1,9 @@
+"""/r/, /l/ 유음 계열의 acoustic feature 분석을 담당하는 모듈.
+
+mel band energy, MFCC transition, energy 변화량을 기반으로 유음 발음의 전이 특성을 추출한다.
+한국어식 /ㄹ/ 계열로 치우치는 패턴을 실험적으로 감지하기 위한 penalty 계산도 포함한다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
