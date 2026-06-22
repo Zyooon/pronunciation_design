@@ -113,7 +113,7 @@ def _collect_phonemes_needing_onset(word_targets: dict[str, WordTarget]) -> froz
     return frozenset(
         target.target_phoneme
         for target in word_targets.values()
-        if target.position == "onset"
+        if target.phoneme_position == "onset"
     )
 
 

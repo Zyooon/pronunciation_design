@@ -76,13 +76,13 @@ def load_reference_vectors(
 def _parse_target_word_line(line: str, line_number: int) -> TargetWord:
     line_parts = [part.strip() for part in line.split(",")]
 
-    if len(line_parts) != 3:
+    if len(line_parts) < 3:
         raise ValueError(
             f"Invalid words.txt format at line {line_number}: {line}\n"
-            "Expected: word,korean_pronunciation,phoneme"
+            "Expected: word,korean_pronunciation,phoneme[,phoneme_position]"
         )
 
-    word, korean_pronunciation, phoneme = line_parts
+    word, korean_pronunciation, phoneme = line_parts[0], line_parts[1], line_parts[2]
     return TargetWord(
         word=word,
         korean_pronunciation=korean_pronunciation,
