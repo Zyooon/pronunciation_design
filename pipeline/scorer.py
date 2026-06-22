@@ -100,6 +100,25 @@ def z_score_distance_score(
     return float(np.clip(score, 0, 100))
 
 
+def z_score_distance_score_without_c0(
+    user_values: list[float] | np.ndarray,
+    ref_mean: list[float] | np.ndarray,
+    ref_std: list[float] | np.ndarray,
+    scale: float = 10.0,
+) -> float:
+    """MFCC 0번 계수(C0)를 제외한 z-score 거리 점수를 계산한다.
+
+    C0는 전체 spectral energy 성격이 강해 pitch/개인 음색 차이에 민감하다.
+    길이가 2 미만이면 기존 z_score_distance_score로 fallback한다.
+    """
+    user_arr = np.array(user_values, dtype=float)
+    ref_mean_arr = np.array(ref_mean, dtype=float)
+    ref_std_arr = np.array(ref_std, dtype=float)
+    if len(user_arr) < 2:
+        return z_score_distance_score(user_arr, ref_mean_arr, ref_std_arr, scale)
+    return z_score_distance_score(user_arr[1:], ref_mean_arr[1:], ref_std_arr[1:], scale)
+
+
 def ratio_feature_score(user_value: float, ref_value: float) -> float:
     diff_ratio = abs(user_value - ref_value) / (abs(ref_value) + EPSILON)
     return sigmoid_score(diff_ratio)
@@ -337,6 +356,7 @@ def compute_liquid_onset_metrics(
 
 def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
+    mfcc_no_c0_score = z_score_distance_score_without_c0(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     rms_score = rms_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
@@ -345,6 +365,7 @@ def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dic
     return _round_sub_scores(
         score=final_score,
         mfcc_score=mfcc_score,
+        mfcc_no_c0_score=mfcc_no_c0_score,
         duration_score=duration_score,
         spectral_centroid_score=centroid_score,
         rms_score=rms_score,
@@ -353,6 +374,7 @@ def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dic
 
 def score_duration_focused_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
+    mfcc_no_c0_score = z_score_distance_score_without_c0(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     rms_score = rms_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
@@ -361,6 +383,7 @@ def score_duration_focused_vowel(user_features: AudioFeatures, reference: Refere
     return _round_sub_scores(
         score=final_score,
         mfcc_score=mfcc_score,
+        mfcc_no_c0_score=mfcc_no_c0_score,
         duration_score=duration_score,
         spectral_centroid_score=centroid_score,
         rms_score=rms_score,
@@ -369,6 +392,7 @@ def score_duration_focused_vowel(user_features: AudioFeatures, reference: Refere
 
 def score_consonant(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
+    mfcc_no_c0_score = z_score_distance_score_without_c0(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
     zcr_score = zcr_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     final_score = mfcc_score * 0.55 + zcr_score * 0.35 + centroid_score * 0.10
@@ -376,6 +400,7 @@ def score_consonant(user_features: AudioFeatures, reference: ReferenceVector) ->
     return _round_sub_scores(
         score=final_score,
         mfcc_score=mfcc_score,
+        mfcc_no_c0_score=mfcc_no_c0_score,
         zcr_score=zcr_score,
         spectral_centroid_score=centroid_score,
     )
@@ -383,6 +408,7 @@ def score_consonant(user_features: AudioFeatures, reference: ReferenceVector) ->
 
 def score_liquid(user_features: AudioFeatures, reference: ReferenceVector) -> dict[str, float]:
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
+    mfcc_no_c0_score = z_score_distance_score_without_c0(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     zcr_score = zcr_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
@@ -391,6 +417,7 @@ def score_liquid(user_features: AudioFeatures, reference: ReferenceVector) -> di
     return _round_sub_scores(
         score=final_score,
         mfcc_score=mfcc_score,
+        mfcc_no_c0_score=mfcc_no_c0_score,
         duration_score=duration_score,
         spectral_centroid_score=centroid_score,
         zcr_score=zcr_score,
@@ -474,7 +501,12 @@ def _build_phoneme_score_details(
         return score_consonant(user_features, reference)
 
     mfcc_score = z_score_distance_score(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
-    return {"score": round(float(mfcc_score), 1), "mfcc_score": round(float(mfcc_score), 1)}
+    mfcc_no_c0_score = z_score_distance_score_without_c0(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
+    return {
+        "score": round(float(mfcc_score), 1),
+        "mfcc_score": round(float(mfcc_score), 1),
+        "mfcc_no_c0_score": round(float(mfcc_no_c0_score), 1),
+    }
 
 
 def _coerce_issue_flags(value: Any) -> list[str]:
@@ -753,6 +785,10 @@ def score_pronunciation(
     phoneme_type = str(reference.get("phoneme_type", "unknown"))
     sub_scores = _build_phoneme_score_details(user_features, reference, phoneme_type, phoneme)
     base_score = float(sub_scores.pop("score"))
+    mfcc_c0_score_gap = round(
+        float(sub_scores.get("mfcc_no_c0_score", 0.0)) - float(sub_scores.get("mfcc_score", 0.0)),
+        1,
+    )
     centroid_is_low = sub_scores.get("spectral_centroid_score", 100.0) < _CENTROID_LOW_THRESHOLD
     zcr_is_low = sub_scores.get("zcr_score", 100.0) < _ZCR_LOW_THRESHOLD
 
@@ -834,6 +870,7 @@ def score_pronunciation(
         **liquid_acoustic_metrics,
         **schwa_metrics,
         **_get_quality_detail_fields(quality_result),
+        "mfcc_c0_score_gap": mfcc_c0_score_gap,
         "base_score": round(base_score, 1),
         "quality_penalty": 0.0,
         "pronunciation_penalty": pronunciation_penalty,

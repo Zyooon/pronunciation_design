@@ -43,6 +43,8 @@ LIQUID_REFERENCE_PHONEMES = {"r", "l"}
 ALT_REFERENCE_PHONEMES = KO_REFERENCE_PHONEMES | LIQUID_REFERENCE_PHONEMES
 DETAIL_FIELDS = (
     "mfcc_score",
+    "mfcc_no_c0_score",
+    "mfcc_c0_score_gap",
     "duration_score",
     "rms_score",
     "zcr_score",
