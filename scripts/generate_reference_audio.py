@@ -36,10 +36,10 @@ def load_words(path: Path) -> list[tuple[str, str, str]]:
         if not line or line.startswith("#"):
             continue
         parts = line.split(",")
-        if len(parts) != 3:
+        if len(parts) < 3:
             print(f"[SKIP] 형식 오류: {line!r}")
             continue
-        word, ko_pron, phoneme = (p.strip() for p in parts)
+        word, ko_pron, phoneme = parts[0].strip(), parts[1].strip(), parts[2].strip()
         entries.append((word, ko_pron, phoneme))
     return entries
 

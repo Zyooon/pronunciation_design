@@ -66,13 +66,13 @@ def load_word_entries(words_path: Path) -> list[dict]:
                 continue
 
             parts = [part.strip() for part in line.split(",")]
-            if len(parts) != 3:
+            if len(parts) < 3:
                 raise ValueError(
                     f"Invalid format at line {line_number}: {line}\n"
-                    "Expected format: word,korean_pronunciation,phoneme"
+                    "Expected format: word,korean_pronunciation,phoneme[,phoneme_position]"
                 )
 
-            word, korean_pronunciation, phoneme = parts
+            word, korean_pronunciation, phoneme = parts[0], parts[1], parts[2]
             entries.append({"word": word, "korean_pronunciation": korean_pronunciation, "phoneme": phoneme})
 
     return entries

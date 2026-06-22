@@ -40,7 +40,7 @@ def load_word_list() -> list[WordDto]:
     """words.txt를 읽어 WordDto 목록을 반환한다.
 
     빈 줄과 # 주석 줄은 무시한다.
-    필드가 3개가 아닌 줄은 건너뛴다.
+    필드가 3개 미만인 줄은 건너뛴다.
     """
     if not WORDS_PATH.exists():
         log.error("words.txt not found: %s", WORDS_PATH)
@@ -55,11 +55,11 @@ def load_word_list() -> list[WordDto]:
                 continue
 
             parts = [p.strip() for p in line.split(",")]
-            if len(parts) != 3:
+            if len(parts) < 3:
                 log.warning("잘못된 줄 건너뜀: line=%s, content=%s", line_number, line)
                 continue
 
-            word, korean_pronunciation, phoneme = parts
+            word, korean_pronunciation, phoneme = parts[0], parts[1], parts[2]
             words.append(WordDto(
                 word=word,
                 korean_pronunciation=korean_pronunciation,
