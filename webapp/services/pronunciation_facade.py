@@ -173,7 +173,7 @@ def _get_ko_reference_vectors() -> dict:
 
 
 def _get_word_targets() -> dict:
-    """word_targets.json을 캐시해서 반환한다."""
+    """words.txt 기반 WordTarget 딕셔너리를 캐시해서 반환한다."""
     global _word_targets_cache
     if _word_targets_cache is None:
         _word_targets_cache = load_word_targets()
