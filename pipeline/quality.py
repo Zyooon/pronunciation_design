@@ -187,11 +187,6 @@ def check_word_match_detail(audio_path: str, target_word: str) -> WordMatchResul
         return _build_word_match_result(None, "unavailable", None, None)
 
 
-def check_word_match(audio_path: str, target_word: str) -> bool | None:
-    """기존 호출부 호환을 위해 word_match 값만 반환한다."""
-    return check_word_match_detail(audio_path, target_word)["word_match"]
-
-
 def _has_bad_duration(duration_ms: float, reference_duration_ms: float | None) -> list[str]:
     issue_flags: list[str] = []
 

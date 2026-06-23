@@ -69,17 +69,6 @@ def load_word_list() -> list[WordDto]:
     return words
 
 
-def analyze_audio(word: str, phoneme: str, audio_path: Path) -> AnalysisResultDto:
-    """음성 파일을 pipeline으로 분석하고 결과를 반환한다.
-
-    Raises:
-        KeyError: 해당 음소의 reference vector가 없을 때
-        FileNotFoundError: reference_vectors.json 또는 오디오 파일이 없을 때
-        ValueError: 오디오가 비어 있을 때
-    """
-    result, _ = analyze_audio_with_features(word, phoneme, audio_path)
-    return result
-
 
 def analyze_audio_with_features(
     word: str, phoneme: str, audio_path: Path

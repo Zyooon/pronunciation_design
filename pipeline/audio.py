@@ -103,16 +103,3 @@ def load_trimmed_audio(
 
     return trimmed_waveform, sr
 
-
-def get_duration_ms(waveform: np.ndarray, sr: int) -> float:
-    """
-    오디오 길이를 밀리초(ms) 단위로 계산합니다.
-
-    Args:
-        waveform: 오디오 파형 데이터
-        sr: 샘플링 레이트
-    """
-    if sr <= 0:
-        raise ValueError("Sample rate must be positive.")
-
-    return round(len(waveform) / sr * 1000, 2)
