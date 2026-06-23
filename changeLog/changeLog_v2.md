@@ -15,6 +15,14 @@
 
 ### 추가
 
+- **음소별 MFCC 가중치 완화** (`pipeline/scorer.py`)
+  - `score_vowel`: MFCC 70% → 60%, duration 15% → 20%, centroid 10% → 15%
+  - `score_duration_focused_vowel`: MFCC 50% → 40%, duration 35% → 45%
+  - `score_consonant`: MFCC 55% → 44%, ZCR 35% → 42%, centroid 10% → 14%
+  - `score_liquid`: MFCC 75% → 50%, ZCR 0% → 15%, duration 15% → 20%, centroid 10% → 15%
+  - `_get_score_weight_profile()` 헬퍼 추가 — 음소 유형별 가중치 프로필 dict 반환
+  - `score_weight_profile`, `mfcc_weight_used` details에 추가
+
 - **점수 분석용 세부 지표** (`pipeline/scorer.py`)
   - `similarity_score` — penalty 적용 전 base_score를 진단용 필드로 details에 노출
   - `mfcc_score_used` — 실제 base_score 계산에 사용된 mfcc_score 값 기록

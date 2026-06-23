@@ -360,7 +360,7 @@ def score_vowel(user_features: AudioFeatures, reference: ReferenceVector) -> dic
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     rms_score = rms_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
-    final_score = mfcc_score * 0.70 + duration_score * 0.15 + centroid_score * 0.10 + rms_score * 0.05
+    final_score = mfcc_score * 0.60 + duration_score * 0.20 + centroid_score * 0.15 + rms_score * 0.05
 
     return _round_sub_scores(
         score=final_score,
@@ -378,7 +378,7 @@ def score_duration_focused_vowel(user_features: AudioFeatures, reference: Refere
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     rms_score = rms_feature_score(float(user_features["rms_mean"]), float(reference["rms_mean"]))
-    final_score = mfcc_score * 0.50 + duration_score * 0.35 + centroid_score * 0.10 + rms_score * 0.05
+    final_score = mfcc_score * 0.40 + duration_score * 0.45 + centroid_score * 0.10 + rms_score * 0.05
 
     return _round_sub_scores(
         score=final_score,
@@ -395,7 +395,7 @@ def score_consonant(user_features: AudioFeatures, reference: ReferenceVector) ->
     mfcc_no_c0_score = z_score_distance_score_without_c0(user_features["mfcc_mean"], reference["mfcc_mean"], reference["mfcc_std"])
     zcr_score = zcr_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
-    final_score = mfcc_score * 0.55 + zcr_score * 0.35 + centroid_score * 0.10
+    final_score = mfcc_score * 0.44 + zcr_score * 0.42 + centroid_score * 0.14
 
     return _round_sub_scores(
         score=final_score,
@@ -412,7 +412,7 @@ def score_liquid(user_features: AudioFeatures, reference: ReferenceVector) -> di
     duration_score = ratio_feature_score(float(user_features["duration_ms"]), float(reference["duration_ms"]))
     centroid_score = ratio_feature_score(float(user_features["spectral_centroid_mean"]), float(reference["spectral_centroid_mean"]))
     zcr_score = zcr_feature_score(float(user_features["zcr_mean"]), float(reference["zcr_mean"]))
-    final_score = mfcc_score * 0.75 + duration_score * 0.15 + centroid_score * 0.10
+    final_score = mfcc_score * 0.50 + duration_score * 0.20 + centroid_score * 0.15 + zcr_score * 0.15
 
     return _round_sub_scores(
         score=final_score,
@@ -421,8 +421,21 @@ def score_liquid(user_features: AudioFeatures, reference: ReferenceVector) -> di
         duration_score=duration_score,
         spectral_centroid_score=centroid_score,
         zcr_score=zcr_score,
-        liquid_zcr_score_weight=0.0,
+        liquid_zcr_score_weight=0.15,
     )
+
+
+def _get_score_weight_profile(phoneme: str, phoneme_type: str) -> dict[str, float]:
+    """음소 유형별 scoring 가중치 프로필을 반환한다."""
+    if phoneme in _DURATION_FOCUSED_PHONEMES:
+        return {"mfcc": 0.40, "duration": 0.45, "centroid": 0.10, "rms": 0.05}
+    if phoneme in _LIQUID_PHONEMES:
+        return {"mfcc": 0.50, "duration": 0.20, "centroid": 0.15, "zcr": 0.15}
+    if phoneme_type == "vowel":
+        return {"mfcc": 0.60, "duration": 0.20, "centroid": 0.15, "rms": 0.05}
+    if phoneme_type == "consonant":
+        return {"mfcc": 0.44, "zcr": 0.42, "centroid": 0.14}
+    return {"mfcc": 1.0}
 
 
 def compute_pronunciation_penalty(sub_scores: dict[str, float], phoneme_type: str, phoneme: str) -> float:
@@ -797,6 +810,8 @@ def score_pronunciation(
     else:
         effective_mfcc_score = mfcc_score_val * 0.4 + float(mfcc_no_c0_val) * 0.6
         effective_mfcc_strategy = "mfcc_40_no_c0_60"
+    score_weight_profile = _get_score_weight_profile(phoneme, phoneme_type)
+    mfcc_weight_used = score_weight_profile.get("mfcc", 1.0)
     centroid_is_low = sub_scores.get("spectral_centroid_score", 100.0) < _CENTROID_LOW_THRESHOLD
     zcr_is_low = sub_scores.get("zcr_score", 100.0) < _ZCR_LOW_THRESHOLD
 
@@ -895,6 +910,8 @@ def score_pronunciation(
         "mfcc_score_used": round(float(sub_scores.get("mfcc_score", 0.0)), 1),
         "effective_mfcc_score": round(effective_mfcc_score, 1),
         "effective_mfcc_strategy": effective_mfcc_strategy,
+        "score_weight_profile": score_weight_profile,
+        "mfcc_weight_used": round(mfcc_weight_used, 2),
         "penalty_breakdown": penalty_breakdown,
         "mfcc_c0_score_gap": mfcc_c0_score_gap,
         "base_score": round(base_score, 1),
