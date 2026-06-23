@@ -863,6 +863,19 @@ def score_pronunciation(
     final_score = float(np.clip(base_score - total_penalty, 0.0, 100.0))
     feedback = get_feedback(final_score, phoneme, phoneme_type)
 
+    penalty_breakdown: dict[str, float] = {
+        "pronunciation_penalty": round(pronunciation_penalty, 1),
+        "korean_like_penalty": round(korean_like_penalty, 1),
+        "f_onset_penalty": round(f_onset_penalty, 1),
+        "f_onset_crest_penalty": round(f_onset_crest_penalty, 1),
+        "f_onset_mfcc_penalty": round(f_onset_mfcc_penalty, 1),
+        "r_micro_penalty": round(r_micro_penalty, 1),
+        "l_micro_penalty": round(l_micro_penalty, 1),
+        "l_borderline_penalty": round(l_borderline_penalty, 1),
+        "liquid_acoustic_penalty": round(liquid_acoustic_penalty, 1),
+        "schwa_overstress_penalty": round(schwa_overstress_penalty, 1),
+    }
+
     details: dict[str, ScoreDetailValue] = {
         **sub_scores,
         **ko_metrics,
@@ -870,6 +883,9 @@ def score_pronunciation(
         **liquid_acoustic_metrics,
         **schwa_metrics,
         **_get_quality_detail_fields(quality_result),
+        "similarity_score": round(base_score, 1),
+        "mfcc_score_used": round(float(sub_scores.get("mfcc_score", 0.0)), 1),
+        "penalty_breakdown": penalty_breakdown,
         "mfcc_c0_score_gap": mfcc_c0_score_gap,
         "base_score": round(base_score, 1),
         "quality_penalty": 0.0,
