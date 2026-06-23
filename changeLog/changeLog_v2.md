@@ -15,6 +15,18 @@
 
 ### 추가
 
+- **점수 분석용 세부 지표** (`pipeline/scorer.py`)
+  - `similarity_score` — penalty 적용 전 base_score를 진단용 필드로 details에 노출
+  - `mfcc_score_used` — 실제 base_score 계산에 사용된 mfcc_score 값 기록
+  - `penalty_breakdown` — 항목별 감점 값을 dict로 묶어 일괄 확인 가능하게 추가
+  - 채점 결과(`final_score`)에는 영향 없음
+
+- **C0 제외 MFCC 비교 지표** (`pipeline/scorer.py`)
+  - `effective_mfcc_score` — `mfcc_score * 0.4 + mfcc_no_c0_score * 0.6` 혼합 점수를 details에 기록
+  - `effective_mfcc_strategy` — 계산 방식 식별자(`mfcc_40_no_c0_60` 또는 `mfcc_only`) 기록
+  - mfcc_no_c0_score가 없으면 mfcc_score 그대로 사용하고 strategy를 `mfcc_only`로 표시
+  - 채점 결과(`final_score`)에는 영향 없음 — 향후 Stage 3에서 실제 가중치에 반영 예정
+
 - **MFCC C0 제외 점수 diagnostic** (`pipeline/scorer.py`, `scripts/evaluate_labeled_recordings.py`)
   - `z_score_distance_score_without_c0()` 함수 추가
   - 각 scoring 함수(`score_vowel`, `score_consonant`, `score_liquid` 등)에서 `mfcc_no_c0_score`, `mfcc_c0_score_gap`을 `details`에 함께 기록

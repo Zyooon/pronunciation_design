@@ -789,6 +789,14 @@ def score_pronunciation(
         float(sub_scores.get("mfcc_no_c0_score", 0.0)) - float(sub_scores.get("mfcc_score", 0.0)),
         1,
     )
+    mfcc_score_val = float(sub_scores.get("mfcc_score", 0.0))
+    mfcc_no_c0_val = sub_scores.get("mfcc_no_c0_score")
+    if mfcc_no_c0_val is None:
+        effective_mfcc_score = mfcc_score_val
+        effective_mfcc_strategy = "mfcc_only"
+    else:
+        effective_mfcc_score = mfcc_score_val * 0.4 + float(mfcc_no_c0_val) * 0.6
+        effective_mfcc_strategy = "mfcc_40_no_c0_60"
     centroid_is_low = sub_scores.get("spectral_centroid_score", 100.0) < _CENTROID_LOW_THRESHOLD
     zcr_is_low = sub_scores.get("zcr_score", 100.0) < _ZCR_LOW_THRESHOLD
 
@@ -885,6 +893,8 @@ def score_pronunciation(
         **_get_quality_detail_fields(quality_result),
         "similarity_score": round(base_score, 1),
         "mfcc_score_used": round(float(sub_scores.get("mfcc_score", 0.0)), 1),
+        "effective_mfcc_score": round(effective_mfcc_score, 1),
+        "effective_mfcc_strategy": effective_mfcc_strategy,
         "penalty_breakdown": penalty_breakdown,
         "mfcc_c0_score_gap": mfcc_c0_score_gap,
         "base_score": round(base_score, 1),
