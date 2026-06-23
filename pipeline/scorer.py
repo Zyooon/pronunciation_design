@@ -22,7 +22,6 @@ _LIQUID_PHONEMES: frozenset[str] = frozenset({"r", "l"})
 _DURATION_FOCUSED_PHONEMES: frozenset[str] = frozenset({"i", "iː"})
 _KO_REFERENCE_PHONEMES: frozenset[str] = frozenset({"θ", "v", "æ", "f", "i"})
 _SCHWA_PHONEMES: frozenset[str] = frozenset({"ə"})
-_VOWEL_PHONEMES: frozenset[str] = frozenset({"i", "iː", "æ", "ə", "oʊ"})
 
 _MFCC_LOW_THRESHOLD = 55.0
 _DURATION_LOW_THRESHOLD = 45.0
