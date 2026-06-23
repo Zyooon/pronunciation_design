@@ -445,10 +445,7 @@ def compute_pronunciation_penalty(sub_scores: dict[str, float], phoneme_type: st
     zcr_score = sub_scores.get("zcr_score", 100.0)
 
     if phoneme in _LIQUID_PHONEMES:
-        penalty = 0.0
-        if mfcc_score < _MFCC_LOW_THRESHOLD:
-            penalty += 5.0
-        return round(float(penalty), 1)
+        return 0.0
 
     penalty = 0.0
     if mfcc_score < _MFCC_LOW_THRESHOLD:
@@ -656,6 +653,8 @@ def _compute_f_onset_zcr_penalty(
         return 0.0, 1.0, "missing_onset_zcr"
 
     ratio = float(user_onset_zcr_mean) / (float(ref_onset_zcr_mean) + EPSILON)
+    if ratio < 0.45:
+        return 2.0, ratio, "applied_direct"
     if korean_pattern_status in ("borderline_korean_like", "ko_error") and ratio < 0.65:
         return 2.0, ratio, "applied"
     return 0.0, ratio, "none"
@@ -720,6 +719,8 @@ def _compute_f_onset_crest_penalty(
         return 0.0, 0.0, "missing_onset_rms"
 
     crest_factor = float(onset_rms_max) / (float(onset_rms_mean) + EPSILON)
+    if crest_factor >= 6.0:
+        return 2.0, crest_factor, "applied_direct"
     if korean_pattern_status in ("borderline_korean_like", "ko_error") and crest_factor >= 4.0:
         return 2.0, crest_factor, "applied"
     return 0.0, crest_factor, "none"

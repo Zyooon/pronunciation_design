@@ -13,6 +13,14 @@
   - `check_word_match` — `check_word_match_detail`의 호환 래퍼였으나 실제 호출부 없음
   - `analyze_audio` — `analyze_audio_with_features`의 래퍼였으나 import하는 곳 없음
 
+### 변경
+
+- **penalty 로직 MFCC 게이트 의존성 제거** (`pipeline/scorer.py`)
+  - `/r/`, `/l/` liquid 음소의 MFCC < 55 기반 penalty gate 제거 — liquid_alt/acoustic 채널이 독립적으로 오독을 탐지하므로 MFCC 문지기 불필요
+  - `_compute_f_onset_zcr_penalty`: onset ZCR ratio < 0.45이면 korean_pattern_status 무관하게 직접 패널티 적용 (`applied_direct`)
+  - `_compute_f_onset_crest_penalty`: crest_factor >= 6.0이면 korean_pattern_status 무관하게 직접 패널티 적용 (`applied_direct`)
+  - 기존 MFCC 조건부 경로(ratio < 0.65, crest >= 4.0)는 유지해 경계선 케이스 병행 포착
+
 ### 추가
 
 - **음소별 MFCC 가중치 완화** (`pipeline/scorer.py`)
